@@ -10,14 +10,13 @@ from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.arima.model import ARIMA
 
 # -----------------------------
-# 📌 페이지 설정 (가로 확장)
+# 📌 페이지 설정
 # -----------------------------
 st.set_page_config(layout="wide")
-
 st.title("📈 시계열 분석 & 예측 웹앱")
 
 # -----------------------------
-# 📌 데이터 로딩 (안정 버전)
+# 📌 함수 정의 (반드시 위에)
 # -----------------------------
 def load_data(file):
     try:
@@ -31,6 +30,37 @@ def load_data(file):
             file.seek(0)
             return pd.read_csv(file, encoding='cp949', sep=';')
 
+
+def hampel_filter(series, window=5, n=3):
+    new = series.copy()
+
+    for i in range(window, len(series) - window):
+        win = series.iloc[i-window:i+window]
+        med = np.median(win)
+        mad = np.median(np.abs(win - med))
+
+        if abs(series.iloc[i] - med) > n * mad:
+            new.iloc[i] = med
+
+    return new
+
+
+def fft_denoise(signal, keep_ratio=0.1):
+    fft = np.fft.fft(signal)
+    n = len(fft)
+    cutoff = int(n * keep_ratio)
+
+    fft[cutoff:n-cutoff] = 0
+    return np.fft.ifft(fft).real
+
+
+def mae(y, yhat):
+    return np.mean(np.abs(y - yhat))
+
+
+# -----------------------------
+# 📌 파일 업로드
+# -----------------------------
 uploaded_file = st.file_uploader("CSV 파일 업로드", type=["csv"])
 
 if uploaded_file:
@@ -46,9 +76,14 @@ if uploaded_file:
     with col1:
         date_col = st.selectbox("날짜 컬럼", df.columns)
 
-    with col2:
-        value_col = st.selectbox("값 컬럼", df.columns)
+    numeric_cols = df.select_dtypes(include=np.number).columns
 
+    with col2:
+        value_col = st.selectbox("값 컬럼", numeric_cols)
+
+    # -----------------------------
+    # 인덱스 설정
+    # -----------------------------
     df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
     df = df.dropna(subset=[date_col])
     df = df.sort_values(date_col)
@@ -70,58 +105,32 @@ if uploaded_file:
     with col3:
         fft_flag = st.checkbox("FFT 디노이징")
 
-    # 결측치
+    # 결측치 처리
     if missing_method == "interpolate":
         df[value_col] = df[value_col].interpolate()
     elif missing_method == "ffill":
-        df[value_col] = df[value_col].fillna(method='ffill')
+        df[value_col] = df[value_col].ffill()
     elif missing_method == "bfill":
-        df[value_col] = df[value_col].fillna(method='bfill')
+        df[value_col] = df[value_col].bfill()
 
-    # Hampel
-    def hampel_filter(series, window=5, n=3):
-    new = series.copy()
-
-    for i in range(window, len(series) - window):
-        win = series.iloc[i-window:i+window]
-
-        med = np.median(win)
-        mad = np.median(np.abs(win - med))
-
-        if abs(series.iloc[i] - med) > n * mad:
-            new.iloc[i] = med
-
-    return new
-
+    # 이상치 처리
     if outlier_flag:
         df[value_col] = hampel_filter(df[value_col])
 
     # FFT
-    def fft_denoise(signal, keep_ratio=0.1):
-    fft = np.fft.fft(signal)
-
-    n = len(fft)
-    cutoff = int(n * keep_ratio)
-
-    fft[cutoff:n-cutoff] = 0
-
-    return np.fft.ifft(fft).real
-    
     if fft_flag:
-    signal = df[value_col].values
+        signal = df[value_col].values
+        denoised = fft_denoise(signal)
 
-    denoised = fft_denoise(signal)
-
-    if len(denoised) == len(df):
-        df[value_col] = denoised
-    else:
-        st.error("FFT 결과 길이가 맞지 않습니다.")
+        if len(denoised) == len(df):
+            df[value_col] = denoised
+        else:
+            st.error("FFT 결과 길이 오류")
 
     # -----------------------------
-    # 📊 그래프
+    # 📊 시각화
     # -----------------------------
     st.subheader("📊 시계열 데이터")
-
     fig = px.line(df, y=value_col)
     st.plotly_chart(fig, use_container_width=True)
 
@@ -131,7 +140,6 @@ if uploaded_file:
     st.subheader("📈 모델 선택")
 
     model_type = st.selectbox("모델", ["평활법", "분해", "ARIMA"])
-
     forecast = None
 
     # -----------------------------
@@ -183,11 +191,11 @@ if uploaded_file:
         d = st.slider("d", 0, 2, 1)
         q = st.slider("q", 0, 5, 1)
 
-        model = ARIMA(df[value_col], order=(p,d,q)).fit()
+        model = ARIMA(df[value_col], order=(p, d, q)).fit()
         forecast = model.forecast(10)
 
     # -----------------------------
-    # 📊 결과 시각화
+    # 📊 예측 시각화
     # -----------------------------
     if forecast is not None:
         future_index = pd.date_range(df.index[-1], periods=10, freq='D')
@@ -203,10 +211,7 @@ if uploaded_file:
     # -----------------------------
     st.subheader("📏 평가 지표")
 
-    def mae(y, yhat):
-        return np.mean(np.abs(y - yhat))
-
-    st.info("MAE: 평균 절대 오차 (예측 정확도)")
+    st.info("MAE: 평균 절대 오차 (작을수록 좋음)")
 
     train_size = int(len(df) * 0.7)
     train = df[value_col][:train_size]
