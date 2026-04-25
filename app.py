@@ -18,18 +18,33 @@ st.set_page_config(layout="wide")
 st.title("📈 시계열 분석 대시보드")
 
 # -----------------------------
-# 세션 상태 (평가 누적)
+# 세션 상태
 # -----------------------------
 if "results" not in st.session_state:
     st.session_state.results = []
 
+if "run_model" not in st.session_state:
+    st.session_state.run_model = False
+
+if "forecast" not in st.session_state:
+    st.session_state.forecast = None
+
 # -----------------------------
 # 함수
 # -----------------------------
+def load_data(file):
+    for enc in ["utf-8", "cp949", "euc-kr"]:
+        try:
+            file.seek(0)
+            return pd.read_csv(file, encoding=enc)
+        except:
+            continue
+    return None
+
+
 def hampel_filter(series, window=5, n=3):
     series = series.astype(float)
     new = series.copy()
-
     for i in range(window, len(series)-window):
         win = series.iloc[i-window:i+window]
         med = np.median(win)
@@ -78,7 +93,7 @@ with left:
         file = st.file_uploader("CSV 업로드")
 
         if file:
-            df = pd.read_csv(file)
+            df = load_data(file)
 
             date_col = df.columns[0]
             value_col = df.select_dtypes(include=np.number).columns[0]
@@ -87,15 +102,11 @@ with left:
             df = df.sort_values(date_col).set_index(date_col)
             df[value_col] = df[value_col].astype(float)
 
-            # -----------------------------
             # 자동 전처리
-            # -----------------------------
             raw = df[value_col].copy()
-
             proc = raw.interpolate()
             proc = hampel_filter(proc)
             proc = fft_denoise(proc)
-
             df[value_col] = proc
 
             st.success("✔ 전처리 완료")
@@ -128,26 +139,27 @@ with left:
                 "월": "M",
                 "년": "Y"
             }
-
             freq = freq_map[unit]
 
-            if st.button("🔄 평가 초기화"):
+            if st.button("🚀 예측 실행"):
+                st.session_state.run_model = True
+
+            if st.button("🗑 평가 초기화"):
                 st.session_state.results = []
 
 # -----------------------------
 # RIGHT
 # -----------------------------
 with right:
-    if file:
-        with st.container(border=True):
-            st.subheader("📊 예측 결과")
+    if file and st.session_state.run_model:
 
-            split = int(len(df)*0.8)
-            train = df[value_col][:split]
-            test = df[value_col][split:]
+        split = int(len(df)*0.8)
+        train = df[value_col][:split]
+        test = df[value_col][split:]
 
-            forecast = None
+        forecast = None
 
+        with st.spinner("모델 실행 중..."):
             try:
                 if model_type == "이동평균":
                     forecast = np.repeat(train.rolling(5).mean().iloc[-1], horizon)
@@ -163,8 +175,8 @@ with right:
                     forecast = model.forecast(horizon)
 
                 elif model_type == "ARIMA":
-                    st.write("ADF:", adfuller(train)[1])
-                    st.write("LB:", acorr_ljungbox(train, lags=[1])['lb_pvalue'].values[0])
+                    st.write("ADF p-value:", adfuller(train)[1])
+                    st.write("Ljung-Box p-value:", acorr_ljungbox(train, lags=[1])['lb_pvalue'].values[0])
 
                     model = ARIMA(train, order=(1,1,1)).fit()
                     forecast = model.forecast(horizon)
@@ -176,7 +188,9 @@ with right:
                     forecast = model.forecast(horizon)
 
                 elif model_type == "AutoARIMA":
-                    model = auto_arima(train, seasonal=True, m=12,
+                    model = auto_arima(train,
+                                       seasonal=True,
+                                       m=12,
                                        suppress_warnings=True)
                     forecast = model.predict(n_periods=horizon)
 
@@ -184,75 +198,70 @@ with right:
                 st.error(e)
                 forecast = np.repeat(train.iloc[-1], horizon)
 
-            future_idx = pd.date_range(df.index[-1], periods=horizon, freq=freq)
+        st.session_state.forecast = forecast
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=train.index, y=train, name="Train"))
-            fig.add_trace(go.Scatter(x=test.index, y=test, name="Test"))
-            fig.add_trace(go.Scatter(x=future_idx, y=forecast, name="Forecast"))
+        future_idx = pd.date_range(df.index[-1], periods=horizon, freq=freq)
 
-            st.plotly_chart(fig, use_container_width=True)
+        # 전체 그래프
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=train.index, y=train, name="Train"))
+        fig.add_trace(go.Scatter(x=test.index, y=test, name="Test"))
+        fig.add_trace(go.Scatter(x=future_idx, y=forecast, name="Forecast"))
+        st.plotly_chart(fig, use_container_width=True)
 
         # -----------------------------
-        # 평가
+        # 평가 + 비교
         # -----------------------------
-        with st.container(border=True):
-            st.subheader("📏 평가 지표")
+        st.subheader("📏 평가 지표")
 
-            st.subheader("📊 Test 데이터 vs 예측 결과 비교")
+        try:
+            model = ARIMA(train, order=(1,1,1)).fit()
+            preds = model.forecast(len(test))
 
-            # 시평 문자열 표시용
-            unit_kor = unit
-            title_text = f"test데이터와 예측 결과 비교 (시평 = {horizon}{unit_kor})"
-            
-            fig_compare = go.Figure()
-            
-            # Test 실제값
-            fig_compare.add_trace(go.Scatter(
-                x=test.index,
-                y=test,
-                name="Test (Actual)",
-                mode="lines+markers"
-            ))
-            
-            # 예측값 (Test 길이에 맞춰 잘라야 함)
-            compare_len = min(len(test), len(forecast))
-            
-            fig_compare.add_trace(go.Scatter(
-                x=test.index[:compare_len],
-                y=forecast[:compare_len],
-                name="Forecast",
-                mode="lines+markers"
-            ))
-            
-            fig_compare.update_layout(
-                title=title_text,
-                xaxis_title="Time",
-                yaxis_title="Value",
-                legend_title="Legend"
-            )
-            
-            st.plotly_chart(fig_compare, use_container_width=True)
+            m = mae(test, preds)
+            r = mdrae(test, preds)
+            ts = tracking_signal(test, preds)
 
-            try:
-                model = ARIMA(train, order=(1,1,1)).fit()
-                preds = model.forecast(len(test))
+            result = {
+                "Model": model_type,
+                "MAE": round(m, 3),
+                "MdRAE": round(r, 3),
+                "TS": round(ts, 3)
+            }
 
-                m = mae(test, preds)
-                r = mdrae(test, preds)
-                ts = tracking_signal(test, preds)
+            st.session_state.results.append(result)
+            st.dataframe(pd.DataFrame(st.session_state.results), use_container_width=True)
 
-                result = {
-                    "Model": model_type,
-                    "MAE": round(m, 3),
-                    "MdRAE": round(r, 3),
-                    "TS": round(ts, 3)
-                }
+        except:
+            st.warning("평가 실패")
 
-                st.session_state.results.append(result)
+        # -----------------------------
+        # Test vs Forecast 비교
+        # -----------------------------
+        st.subheader("📊 Test데이터 vs 예측 결과 비교")
 
-                df_res = pd.DataFrame(st.session_state.results)
-                st.dataframe(df_res, use_container_width=True)
+        compare_len = min(len(test), len(forecast))
 
-            except:
-                st.warning("평가 실패")
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=test.index,
+            y=test,
+            name="Test",
+            mode="lines+markers"
+        ))
+
+        fig2.add_trace(go.Scatter(
+            x=test.index[:compare_len],
+            y=forecast[:compare_len],
+            name="Forecast",
+            mode="lines+markers"
+        ))
+
+        fig2.update_layout(
+            title=f"test데이터와 예측 결과 비교 (시평 = {horizon}{unit})"
+        )
+
+        st.plotly_chart(fig2, use_container_width=True)
+
+    elif file:
+        st.info("👉 옵션 설정 후 '예측 실행' 버튼을 눌러주세요")
