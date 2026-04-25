@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
+import plotly.graph_objects as go
 
+from sktime.transformations.series.impute import Imputer
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from statsmodels.tsa.seasonal import seasonal_decompose, STL
 from statsmodels.tsa.stattools import adfuller
@@ -10,34 +11,31 @@ from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.arima.model import ARIMA
 
 # -----------------------------
-# 📌 페이지 설정
+# 기본 설정
 # -----------------------------
 st.set_page_config(layout="wide")
-st.title("📈 시계열 분석 & 예측 웹앱")
+st.title("📈 시계열 분석 & 예측")
 
 # -----------------------------
-# 📌 함수 정의 (반드시 위에)
+# 유틸 함수
 # -----------------------------
-def load_data(file):
-    try:
-        file.seek(0)
-        return pd.read_csv(file, encoding='utf-8')
-    except:
-        try:
-            file.seek(0)
-            return pd.read_csv(file, encoding='cp949')
-        except:
-            file.seek(0)
-            return pd.read_csv(file, encoding='cp949', sep=';')
-
-
 def hampel_filter(series, window=5, n=3):
+    series = series.astype(float)
     new = series.copy()
 
+    if len(series) < window * 2:
+        return new
+
     for i in range(window, len(series) - window):
-        win = series.iloc[i-window:i+window]
+        win = series.iloc[i-window:i+window].dropna()
+        if len(win) == 0:
+            continue
+
         med = np.median(win)
         mad = np.median(np.abs(win - med))
+
+        if mad == 0:
+            continue
 
         if abs(series.iloc[i] - med) > n * mad:
             new.iloc[i] = med
@@ -46,6 +44,7 @@ def hampel_filter(series, window=5, n=3):
 
 
 def fft_denoise(signal, keep_ratio=0.1):
+    signal = np.array(signal, dtype=float)
     fft = np.fft.fft(signal)
     n = len(fft)
     cutoff = int(n * keep_ratio)
@@ -58,166 +57,177 @@ def mae(y, yhat):
     return np.mean(np.abs(y - yhat))
 
 
+def mdrae(y, yhat):
+    naive = y.shift(1)
+    return np.median(np.abs((y - yhat) / (y - naive)).dropna())
+
+
+def tracking_signal(y, yhat):
+    err = y - yhat
+    return err.sum() / (np.mean(np.abs(err)) + 1e-8)
+
+
 # -----------------------------
-# 📌 파일 업로드
+# 레이아웃
 # -----------------------------
-uploaded_file = st.file_uploader("CSV 파일 업로드", type=["csv"])
+left, right = st.columns([1, 1.2])
 
-if uploaded_file:
-    df = load_data(uploaded_file)
+# -----------------------------
+# 📌 LEFT: 데이터 + 옵션
+# -----------------------------
+with left:
 
-    st.write("데이터 미리보기", df.head())
+    st.subheader("1️⃣ 데이터 업로드")
+    file = st.file_uploader("CSV 업로드")
 
-    # -----------------------------
-    # 컬럼 선택
-    # -----------------------------
-    col1, col2 = st.columns(2)
+    if file:
+        df = pd.read_csv(file)
+        st.dataframe(df.head())
 
-    with col1:
         date_col = st.selectbox("날짜 컬럼", df.columns)
+        value_col = st.selectbox("값 컬럼", df.select_dtypes(include=np.number).columns)
 
-    numeric_cols = df.select_dtypes(include=np.number).columns
+        df[date_col] = pd.to_datetime(df[date_col])
+        df = df.sort_values(date_col).set_index(date_col)
 
-    with col2:
-        value_col = st.selectbox("값 컬럼", numeric_cols)
+        # 🔥 dtype 안정화
+        df[value_col] = df[value_col].astype(float)
 
-    # -----------------------------
-    # 인덱스 설정
-    # -----------------------------
-    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-    df = df.dropna(subset=[date_col])
-    df = df.sort_values(date_col)
-    df.set_index(date_col, inplace=True)
+        st.subheader("2️⃣ 전처리")
 
-    # -----------------------------
-    # 📌 전처리
-    # -----------------------------
-    st.subheader("⚙️ 전처리")
+        # 결측치 (sktime)
+        if st.checkbox("결측치 처리"):
+            imputer = Imputer(method="drift")
+            df[value_col] = imputer.fit_transform(df[value_col])
 
-    col1, col2, col3 = st.columns(3)
+        # 이상치
+        if st.checkbox("이상치 제거 (Hampel)"):
+            df[value_col] = hampel_filter(df[value_col])
 
-    with col1:
-        missing_method = st.selectbox("결측치 처리", ["none", "interpolate", "ffill", "bfill"])
+        # FFT
+        if st.checkbox("노이즈 제거 (FFT)"):
+            df[value_col] = fft_denoise(df[value_col])
 
-    with col2:
-        outlier_flag = st.checkbox("이상치 처리 (Hampel)")
+        st.line_chart(df[value_col])
 
-    with col3:
-        fft_flag = st.checkbox("FFT 디노이징")
+        st.subheader("3️⃣ 예측 옵션")
 
-    # 결측치 처리
-    if missing_method == "interpolate":
-        df[value_col] = df[value_col].interpolate()
-    elif missing_method == "ffill":
-        df[value_col] = df[value_col].ffill()
-    elif missing_method == "bfill":
-        df[value_col] = df[value_col].bfill()
+        model_type = st.selectbox("모델 선택", [
+            "이동평균",
+            "지수평활",
+            "Holt",
+            "Holt-Winters",
+            "분해",
+            "STL",
+            "ARIMA"
+        ])
 
-    # 이상치 처리
-    if outlier_flag:
-        df[value_col] = hampel_filter(df[value_col])
+        horizon = st.number_input("예측 기간", 5, 200, 30)
 
-    # FFT
-    if fft_flag:
-        signal = df[value_col].values
-        denoised = fft_denoise(signal)
+        freq = st.selectbox("단위", ["D", "M", "Y"])
 
-        if len(denoised) == len(df):
-            df[value_col] = denoised
-        else:
-            st.error("FFT 결과 길이 오류")
+        eval_method = st.selectbox("평가 방식", ["rolling", "expanding"])
 
-    # -----------------------------
-    # 📊 시각화
-    # -----------------------------
-    st.subheader("📊 시계열 데이터")
-    fig = px.line(df, y=value_col)
-    st.plotly_chart(fig, use_container_width=True)
 
-    # -----------------------------
-    # 📌 모델 선택
-    # -----------------------------
-    st.subheader("📈 모델 선택")
+# -----------------------------
+# 📌 RIGHT: 결과
+# -----------------------------
+with right:
 
-    model_type = st.selectbox("모델", ["평활법", "분해", "ARIMA"])
-    forecast = None
+    if file:
 
-    # -----------------------------
-    # 평활법
-    # -----------------------------
-    if model_type == "평활법":
-        trend = st.selectbox("추세", [None, "add"])
-        seasonal = st.selectbox("계절성", [None, "add", "mul"])
-        period = st.number_input("계절 주기", value=12)
+        st.subheader("4️⃣ 예측 결과")
 
-        model = ExponentialSmoothing(
-            df[value_col],
-            trend=trend,
-            seasonal=seasonal,
-            seasonal_periods=period
-        ).fit()
+        # train/test
+        split = int(len(df) * 0.8)
+        train = df[value_col][:split]
+        test = df[value_col][split:]
 
-        forecast = model.forecast(10)
+        forecast = None
 
-    # -----------------------------
-    # 분해
-    # -----------------------------
-    elif model_type == "분해":
-        method = st.selectbox("분해 방식", ["additive", "multiplicative", "STL"])
+        try:
+            if model_type == "이동평균":
+                forecast = train.rolling(5).mean().iloc[-1]
+                forecast = np.repeat(forecast, horizon)
 
-        if method == "STL":
-            res = STL(df[value_col]).fit()
-            st.line_chart(res.trend)
-            st.line_chart(res.seasonal)
-            st.line_chart(res.resid)
-        else:
-            res = seasonal_decompose(df[value_col], model=method)
-            st.line_chart(res.trend)
+            elif model_type == "지수평활":
+                model = ExponentialSmoothing(train).fit()
+                forecast = model.forecast(horizon)
 
-    # -----------------------------
-    # ARIMA
-    # -----------------------------
-    elif model_type == "ARIMA":
+            elif model_type == "Holt":
+                model = ExponentialSmoothing(train, trend="add").fit()
+                forecast = model.forecast(horizon)
 
-        st.subheader("📌 통계 검정")
+            elif model_type == "Holt-Winters":
+                model = ExponentialSmoothing(
+                    train,
+                    trend="add",
+                    seasonal="add",
+                    seasonal_periods=12
+                ).fit()
+                forecast = model.forecast(horizon)
 
-        adf_p = adfuller(df[value_col])[1]
-        st.write(f"ADF p-value: {adf_p:.4f}")
+            elif model_type == "분해":
+                res = seasonal_decompose(train)
+                st.line_chart(res.trend)
+                forecast = np.repeat(train.iloc[-1], horizon)
 
-        lb_p = acorr_ljungbox(df[value_col], lags=[10])['lb_pvalue'].values[0]
-        st.write(f"Ljung-Box p-value: {lb_p:.4f}")
+            elif model_type == "STL":
+                res = STL(train).fit()
+                st.line_chart(res.trend)
+                forecast = np.repeat(train.iloc[-1], horizon)
 
-        p = st.slider("p", 0, 5, 1)
-        d = st.slider("d", 0, 2, 1)
-        q = st.slider("q", 0, 5, 1)
+            elif model_type == "ARIMA":
 
-        model = ARIMA(df[value_col], order=(p, d, q)).fit()
-        forecast = model.forecast(10)
+                st.write("ADF p-value:", adfuller(train)[1])
+                st.write("Ljung-Box p-value:", acorr_ljungbox(train, lags=[1])['lb_pvalue'].values[0])
 
-    # -----------------------------
-    # 📊 예측 시각화
-    # -----------------------------
-    if forecast is not None:
-        future_index = pd.date_range(df.index[-1], periods=10, freq='D')
+                model = ARIMA(train, order=(1,1,1)).fit()
+                forecast = model.forecast(horizon)
 
-        fig2 = px.line()
-        fig2.add_scatter(x=df.index, y=df[value_col], name="Actual")
-        fig2.add_scatter(x=future_index, y=forecast, name="Forecast")
+        except Exception as e:
+            st.error(f"모델 오류 발생 → {e}")
+            forecast = np.repeat(train.iloc[-1], horizon)
 
-        st.plotly_chart(fig2, use_container_width=True)
+        # index 생성
+        future_idx = pd.date_range(df.index[-1], periods=horizon, freq=freq)
 
-    # -----------------------------
-    # 📏 평가
-    # -----------------------------
-    st.subheader("📏 평가 지표")
+        # 그래프
+        fig = go.Figure()
 
-    st.info("MAE: 평균 절대 오차 (작을수록 좋음)")
+        fig.add_trace(go.Scatter(x=train.index, y=train, name="Train"))
+        fig.add_trace(go.Scatter(x=test.index, y=test, name="Test"))
+        fig.add_trace(go.Scatter(x=future_idx, y=forecast, name="Forecast"))
 
-    train_size = int(len(df) * 0.7)
-    train = df[value_col][:train_size]
-    test = df[value_col][train_size:]
+        st.plotly_chart(fig, use_container_width=True)
 
-    model = ARIMA(train, order=(1,1,1)).fit()
-    preds = model.forecast(len(test))
+        # -----------------------------
+        # 📏 평가
+        # -----------------------------
+        st.subheader("5️⃣ 평가 지표")
 
-    st.write("MAE:", mae(test, preds))
+        try:
+            model = ARIMA(train, order=(1,1,1)).fit()
+            preds = model.forecast(len(test))
+
+            m = mae(test, preds)
+            r = mdrae(test, preds)
+            ts = tracking_signal(test, preds)
+
+            st.metric("MAE", round(m, 3))
+            st.metric("MdRAE", round(r, 3))
+            st.metric("TS", round(ts, 3))
+
+            st.info("""
+MAE: 평균 절대 오차 (작을수록 좋음)  
+MdRAE: 상대 오차 (1보다 작으면 좋음)  
+TS: -4 ~ 4 범위면 안정적  
+""")
+
+            if abs(ts) < 4:
+                st.success("✅ 이 예측은 적절합니다.")
+            else:
+                st.error("❌ 편향된 예측입니다. 모델을 바꿔보세요.")
+
+        except:
+            st.warning("평가 실패")
