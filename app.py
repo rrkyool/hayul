@@ -15,7 +15,7 @@ from pmdarima import auto_arima
 # 기본 설정
 # -----------------------------
 st.set_page_config(layout="wide")
-st.title("📈 시계열 분석 대시보드")
+st.title("📈 시계열 분석 Project1 수요 예측")
 
 # -----------------------------
 # 세션 상태
@@ -77,6 +77,53 @@ def tracking_signal(y, yhat):
     err = y - yhat
     return err.sum() / (np.mean(np.abs(err)) + 1e-8)
 
+def rolling_forecast(train, test, model_type):
+
+    history = list(train)
+    preds = []
+
+    for t in range(len(test)):
+        if model_type == "ARIMA":
+            model = ARIMA(history, order=(1,1,1)).fit()
+            yhat = model.forecast()[0]
+
+        elif model_type == "SARIMA":
+            model = SARIMAX(history, order=(1,1,1),
+                            seasonal_order=(1,1,1,12)).fit(disp=False)
+            yhat = model.forecast()[0]
+
+        else:
+            yhat = history[-1]
+
+        preds.append(yhat)
+        history.append(test.iloc[t])
+
+    return np.array(preds)
+
+
+def expanding_forecast(train, test, model_type):
+
+    preds = []
+
+    for i in range(len(test)):
+        hist = pd.concat([train, test[:i]])
+
+        if model_type == "ARIMA":
+            model = ARIMA(hist, order=(1,1,1)).fit()
+            yhat = model.forecast()[0]
+
+        elif model_type == "SARIMA":
+            model = SARIMAX(hist, order=(1,1,1),
+                            seasonal_order=(1,1,1,12)).fit(disp=False)
+            yhat = model.forecast()[0]
+
+        else:
+            yhat = hist.iloc[-1]
+
+        preds.append(yhat)
+
+    return np.array(preds)
+
 
 # -----------------------------
 # 레이아웃
@@ -112,9 +159,19 @@ with left:
             st.success("✔ 전처리 완료")
 
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df.index, y=raw, name="원본", opacity=0.4))
-            fig.add_trace(go.Scatter(x=df.index, y=proc, name="전처리"))
-            st.plotly_chart(fig, use_container_width=True)
+
+            fig.add_trace(go.Scatter(
+                x=df.index, y=raw,
+                name="원본",
+                line=dict(color="skyblue"),
+                opacity=0.7
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=df.index, y=proc,
+                name="전처리",
+                line=dict(color="purple")
+            ))
 
     if file:
         with st.container(border=True):
@@ -141,6 +198,8 @@ with left:
             }
             freq = freq_map[unit]
 
+            eval_type = st.selectbox("평가 방식", ["rolling", "expanding"])
+
             if st.button("🚀 예측 실행"):
                 st.session_state.run_model = True
 
@@ -151,15 +210,16 @@ with left:
 # RIGHT
 # -----------------------------
 with right:
-    if file and st.session_state.run_model:
+    if file:
+        with st.container(border=True):
+            st.subheader("📊 예측 결과")
 
-        split = int(len(df)*0.8)
-        train = df[value_col][:split]
-        test = df[value_col][split:]
+            split = int(len(df)*0.8)
+            train = df[value_col][:split]
+            test = df[value_col][split:]
 
-        forecast = None
+            forecast = None
 
-        with st.spinner("모델 실행 중..."):
             try:
                 if model_type == "이동평균":
                     forecast = np.repeat(train.rolling(5).mean().iloc[-1], horizon)
@@ -175,9 +235,24 @@ with right:
                     forecast = model.forecast(horizon)
 
                 elif model_type == "ARIMA":
-                    st.write("ADF p-value:", adfuller(train)[1])
-                    st.write("Ljung-Box p-value:", acorr_ljungbox(train, lags=[1])['lb_pvalue'].values[0])
-
+                
+                    st.subheader("📊 통계 검정 결과")
+                
+                    adf_p = adfuller(train)[1]
+                    lb_p = acorr_ljungbox(train, lags=[1])['lb_pvalue'].values[0]
+                
+                    st.write(f"ADF p-value: {adf_p:.4f}")
+                    if adf_p < 0.05:
+                        st.success("✔ 정상성 만족 → ARIMA 적용 가능")
+                    else:
+                        st.error("❌ 정상성 부족 → 차분 필요")
+                
+                    st.write(f"Ljung-Box p-value: {lb_p:.4f}")
+                    if lb_p > 0.05:
+                        st.success("✔ 잔차가 백색잡음에 가까움 → 모델 적절")
+                    else:
+                        st.warning("⚠ 자기상관 존재 → 모델 개선 필요")
+                
                     model = ARIMA(train, order=(1,1,1)).fit()
                     forecast = model.forecast(horizon)
 
@@ -188,9 +263,7 @@ with right:
                     forecast = model.forecast(horizon)
 
                 elif model_type == "AutoARIMA":
-                    model = auto_arima(train,
-                                       seasonal=True,
-                                       m=12,
+                    model = auto_arima(train, seasonal=True, m=12,
                                        suppress_warnings=True)
                     forecast = model.predict(n_periods=horizon)
 
@@ -198,70 +271,82 @@ with right:
                 st.error(e)
                 forecast = np.repeat(train.iloc[-1], horizon)
 
-        st.session_state.forecast = forecast
+            future_idx = pd.date_range(df.index[-1], periods=horizon, freq=freq)
 
-        future_idx = pd.date_range(df.index[-1], periods=horizon, freq=freq)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=train.index, y=train, name="Train"))
+            fig.add_trace(go.Scatter(x=test.index, y=test, name="Test"))
+            fig.add_trace(go.Scatter(x=future_idx, y=forecast, name="Forecast"))
 
-        # 전체 그래프
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=train.index, y=train, name="Train"))
-        fig.add_trace(go.Scatter(x=test.index, y=test, name="Test"))
-        fig.add_trace(go.Scatter(x=future_idx, y=forecast, name="Forecast"))
-        st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
 
-        # -----------------------------
-        # 평가 + 비교
-        # -----------------------------
-        st.subheader("📏 평가 지표")
+            st.subheader("📌 수요 예측 결과")
 
-        try:
-            model = ARIMA(train, order=(1,1,1)).fit()
-            preds = model.forecast(len(test))
-
-            m = mae(test, preds)
-            r = mdrae(test, preds)
-            ts = tracking_signal(test, preds)
-
-            result = {
-                "Model": model_type,
-                "MAE": round(m, 3),
-                "MdRAE": round(r, 3),
-                "TS": round(ts, 3)
-            }
-
-            st.session_state.results.append(result)
-            st.dataframe(pd.DataFrame(st.session_state.results), use_container_width=True)
-
-        except:
-            st.warning("평가 실패")
+            min_val = np.min(forecast)
+            max_val = np.max(forecast)
+            mean_val = np.mean(forecast)
+            
+            st.info(f"예측 수요는 약 {round(min_val,2)} ~ {round(max_val,2)} 범위이며, 평균은 {round(mean_val,2)} 입니다.")
 
         # -----------------------------
-        # Test vs Forecast 비교
+        # 평가
         # -----------------------------
-        st.subheader("📊 Test데이터 vs 예측 결과 비교")
+        with st.container(border=True):
+            st.subheader("📏 평가 지표")
 
-        compare_len = min(len(test), len(forecast))
+            try:
+                model = ARIMA(train, order=(1,1,1)).fit()
+                preds = model.forecast(len(test))
 
-        fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(
-            x=test.index,
-            y=test,
-            name="Test",
-            mode="lines+markers"
-        ))
+                 if eval_type == "rolling":
+                    preds = rolling_forecast(train, test, model_type)
+                else:
+                    preds = expanding_forecast(train, test, model_type)
 
-        fig2.add_trace(go.Scatter(
-            x=test.index[:compare_len],
-            y=forecast[:compare_len],
-            name="Forecast",
-            mode="lines+markers"
-        ))
+                m = mae(test, preds)
+                r = mdrae(test, preds)
+                ts = tracking_signal(test, preds)
 
-        fig2.update_layout(
-            title=f"test데이터와 예측 결과 비교 (시평 = {horizon}{unit})"
-        )
+                fig2 = go.Figure()
 
-        st.plotly_chart(fig2, use_container_width=True)
+                fig2.add_trace(go.Scatter(
+                    x=train.index, y=train,
+                    name="Train", line=dict(color="blue")
+                ))
+                
+                fig2.add_trace(go.Scatter(
+                    x=test.index, y=test,
+                    name="Test", line=dict(color="orange")
+                ))
+                
+                fig2.add_trace(go.Scatter(
+                    x=test.index, y=preds,
+                    name="Forecast", line=dict(color="green")
+                ))
+                
+                # test 구간 강조
+                fig2.add_vrect(
+                    x0=test.index[0],
+                    x1=test.index[-1],
+                    fillcolor="orange",
+                    opacity=0.1,
+                    line_width=0
+                )
+                
+                st.plotly_chart(fig2, use_container_width=True)
 
-    elif file:
-        st.info("👉 옵션 설정 후 '예측 실행' 버튼을 눌러주세요")
+                result = {
+                    "Model": model_type,
+                    "MAE": round(m, 3),
+                    "MdRAE": round(r, 3),
+                    "TS": round(ts, 3)
+                }
+
+                st.session_state.results.append(result)
+
+                df_res = pd.DataFrame(st.session_state.results)
+                st.dataframe(df_res, use_container_width=True)
+
+            except:
+                st.warning("평가 실패")
+
