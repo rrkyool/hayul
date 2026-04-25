@@ -199,6 +199,41 @@ with right:
         with st.container(border=True):
             st.subheader("📏 평가 지표")
 
+            st.subheader("📊 Test 데이터 vs 예측 결과 비교")
+
+            # 시평 문자열 표시용
+            unit_kor = unit
+            title_text = f"test데이터와 예측 결과 비교 (시평 = {horizon}{unit_kor})"
+            
+            fig_compare = go.Figure()
+            
+            # Test 실제값
+            fig_compare.add_trace(go.Scatter(
+                x=test.index,
+                y=test,
+                name="Test (Actual)",
+                mode="lines+markers"
+            ))
+            
+            # 예측값 (Test 길이에 맞춰 잘라야 함)
+            compare_len = min(len(test), len(forecast))
+            
+            fig_compare.add_trace(go.Scatter(
+                x=test.index[:compare_len],
+                y=forecast[:compare_len],
+                name="Forecast",
+                mode="lines+markers"
+            ))
+            
+            fig_compare.update_layout(
+                title=title_text,
+                xaxis_title="Time",
+                yaxis_title="Value",
+                legend_title="Legend"
+            )
+            
+            st.plotly_chart(fig_compare, use_container_width=True)
+
             try:
                 model = ARIMA(train, order=(1,1,1)).fit()
                 preds = model.forecast(len(test))
