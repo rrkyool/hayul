@@ -15,7 +15,7 @@ from pmdarima import auto_arima
 # 설정
 # -----------------------------
 st.set_page_config(layout="wide")
-st.title("📈 시계열 분석 & 예측")
+st.title("📈 시계열 분석 Project1 수요 예측")
 
 # -----------------------------
 # 함수
@@ -68,6 +68,16 @@ def tracking_signal(y, yhat):
     err = y - yhat
     return err.sum() / (np.mean(np.abs(err)) + 1e-8)
 
+def load_data(file):
+    for enc in ["utf-8", "cp949", "euc-kr"]:
+        try:
+            file.seek(0)
+            return pd.read_csv(file, encoding=enc)
+        except:
+            continue
+    st.error("파일 인코딩을 읽을 수 없습니다.")
+    return None
+
 
 # -----------------------------
 # 레이아웃
@@ -79,11 +89,10 @@ left, right = st.columns([1, 1.2])
 # -----------------------------
 with left:
     st.subheader("1️⃣ 데이터 업로드")
-    file = st.file_uploader("CSV 업로드")
+    file = st.file_uploader("CSV 업로드(단변량)")
 
     if file:
-        df = pd.read_csv(file)
-
+        df = load_data(file)
         date_col = st.selectbox("날짜 컬럼", df.columns)
         value_col = st.selectbox("값 컬럼", df.select_dtypes(include=np.number).columns)
 
@@ -92,18 +101,48 @@ with left:
 
         df[value_col] = df[value_col].astype(float)
 
-        st.subheader("2️⃣ 전처리")
+        st.subheader("2️⃣ 데이터 전처리")
 
-        if st.checkbox("결측치 처리 (interpolate)"):
-            df[value_col] = df[value_col].interpolate()
-
-        if st.checkbox("이상치 제거 (Hampel)"):
-            df[value_col] = hampel_filter(df[value_col])
-
-        if st.checkbox("노이즈 제거 (FFT)"):
-            df[value_col] = fft_denoise(df[value_col])
-
-        st.line_chart(df[value_col])
+        # 원본 보존
+        raw_series = df[value_col].copy()
+        
+        # -----------------------------
+        # 1. 결측치 처리
+        # -----------------------------
+        proc_series = raw_series.interpolate()
+        
+        # -----------------------------
+        # 2. 이상치 처리 (Hampel)
+        # -----------------------------
+        proc_series = hampel_filter(proc_series)
+        
+        # -----------------------------
+        # 3. 노이즈 제거 (FFT)
+        # -----------------------------
+        proc_series = fft_denoise(proc_series)
+        
+        # 결과 반영
+        df[value_col] = proc_series
+        
+        # -----------------------------
+        # 📊 시각화 (Before vs After)
+        # -----------------------------
+        import plotly.graph_objects as go
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=df.index, y=raw_series,
+            name="원본",
+            opacity=0.5
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=df.index, y=proc_series,
+            name="전처리 후"
+        ))
+        
+        st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("3️⃣ 모델 선택")
 
