@@ -164,20 +164,54 @@ with right:
             preds = model.predict(start=test.index[0], end=test.index[-1])
             forecast = model.forecast(horizon)
 
-        elif model_type == "ARIMA":
-            model = ARIMA(train, order=(1,1,1)).fit()
-            preds = model.predict(start=test.index[0], end=test.index[-1])
-            forecast = model.forecast(horizon)
-
-        elif model_type == "SARIMA":
-            model = SARIMAX(train, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-            preds = model.predict(start=test.index[0], end=test.index[-1])
-            forecast = model.forecast(horizon)
-
-        else:
-            model = auto_arima(train, seasonal=True, m=12, stepwise=True)
-            preds = model.predict(n_periods=len(test))
-            forecast = model.predict(n_periods=horizon)
+        # -----------------------------
+        # AutoARIMA 고성능 버전
+        # -----------------------------
+        from sklearn.preprocessing import MinMaxScaler
+        
+        # 1. 로그 변환
+        train_log = np.log1p(train)
+        
+        # 2. 계절성 설정 (단위 기반)
+        freq_map = {
+            "일": 7,
+            "주": 52,
+            "월": 12,
+            "년": 1
+        }
+        m_val = freq_map[unit]
+        
+        # 3. AutoARIMA 모델
+        model = auto_arima(
+            train_log,
+            seasonal=(model_type == "SARIMA"),
+            m=m_val,
+        
+            # 성능 + 속도 핵심 옵션
+            stepwise=True,
+            suppress_warnings=True,
+            error_action="ignore",
+        
+            # 탐색 범위 제한 (속도 개선)
+            max_p=3, max_q=3,
+            max_P=2, max_Q=2,
+        
+            # 자동 차분
+            d=None,
+            D=None,
+        
+            trace=False
+        )
+        
+        # 4. 테스트 예측
+        preds_log = model.predict(n_periods=len(test))
+        
+        # 5. 미래 예측
+        forecast_log = model.predict(n_periods=horizon)
+        
+        # 6. 역변환
+        preds = np.expm1(preds_log)
+        forecast = np.expm1(forecast_log)
 
         # -----------------------------
         # 평가
