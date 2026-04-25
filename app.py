@@ -129,13 +129,23 @@ with left:
                 st.session_state.run_model = True
 
 with right:
+    # -----------------------------
+    # 세션 상태 초기화 (결과 저장용)
+    # -----------------------------
+    if "results_df" not in st.session_state:
+        st.session_state.results_df = pd.DataFrame(
+            columns=["모델 종류", "평가 방법", "상태", "MAE", "MdRAE", "TS"]
+        )
+
     if file and st.session_state.run_model:
         split = int(len(df) * 0.8)
         train, test = df[value_col][:split], df[value_col][split:]
         
+        # 1. 시각화 섹션 (이미지 스타일 반영)
         with st.container(border=True):
-            st.subheader("📊 예측 결과")
+            st.subheader(f"📊 Test Data vs 예측 결과 (시평={horizon})")
             try:
+                # 모델별 예측 로직
                 if model_type == "이동평균":
                     forecast = np.repeat(train.rolling(5).mean().iloc[-1], horizon)
                 elif model_type == "지수평활":
@@ -149,35 +159,75 @@ with right:
                 else:
                     forecast = auto_arima(train, seasonal=True, m=12).predict(n_periods=horizon)
 
+                # 날짜 인덱스 생성
                 freq_map = {"일": "D", "주": "W", "월": "M", "년": "Y"}
                 future_idx = pd.date_range(df.index[-1], periods=horizon+1, freq=freq_map[unit])[1:]
                 
+                # Plotly 시각화 (업로드 이미지 스타일)
                 fig_res = go.Figure()
-                fig_res.add_trace(go.Scatter(x=train.index, y=train, name="Train"))
-                fig_res.add_trace(go.Scatter(x=test.index, y=test, name="Test"))
-                fig_res.add_trace(go.Scatter(x=future_idx, y=forecast, name="Forecast"))
+                # Train
+                fig_res.add_trace(go.Scatter(x=train.index, y=train, name="Train", mode='lines+markers', line=dict(color='#1f77b4')))
+                # Test
+                fig_res.add_trace(go.Scatter(x=test.index, y=test, name="Test", mode='lines+markers', line=dict(color='#ff7f0e')))
+                # Predicted (Test 구간과 겹치는 예측값 시각화를 위해 별도 계산 혹은 Horizon 표시)
+                fig_res.add_trace(go.Scatter(x=future_idx, y=forecast, name="Predicted", mode='lines+markers', line=dict(color='#2ca02c', dash='dot')))
+                
+                fig_res.update_layout(title=f"Test Data vs 예측 결과 (시평={horizon})", hovermode="x unified")
                 st.plotly_chart(fig_res, use_container_width=True)
+                
             except Exception as e:
-                st.error(f"모델 에러: {e}")
+                st.error(f"모델 실행 에러: {e}")
 
+        # 2. 평가 및 로그 누적 섹션
         with st.container(border=True):
-            st.subheader("📏 평가 지표")
+            st.subheader("📏 평가 결과 및 로그")
             try:
-                # 에러 발생 지점 정밀 수정
+                # 평가 수행 (Rolling/Expanding)
                 if eval_type == "rolling":
                     preds = rolling_forecast(train, test, model_type)
                 else:
                     preds = expanding_forecast(train, test, model_type)
                 
                 m, r, ts = mae(test, preds), mdrae(test, preds), tracking_signal(test, preds)
+                status = "PASS" if abs(ts) < 4 else "FAIL"
+                
+                # 결과 누적
+                new_data = pd.DataFrame([{
+                    "모델 종류": model_type,
+                    "평가 방법": eval_type,
+                    "상태": status,
+                    "MAE": round(m, 2),
+                    "MdRAE": round(r, 2),
+                    "TS": round(ts, 2)
+                }])
+                st.session_state.results_df = pd.concat([st.session_state.results_df, new_data], ignore_index=True)
+
+                # 지표 요약 (Metric)
                 c1, c2, c3 = st.columns(3)
                 c1.metric("MAE", round(m, 2))
                 c2.metric("MdRAE", round(r, 2))
                 c3.metric("TS", round(ts, 2))
+
+                if status == "PASS":
+                    st.success("✅ 적절한 예측입니다.")
+                else:
+                    st.warning("⚠️ 모델 재검토가 필요합니다 (TS 임계치 초과).")
+
+                # 누적 데이터프레임 출력
+                st.write("---")
+                st.write("📋 **누적 분석 로그**")
+                st.dataframe(st.session_state.results_df, use_container_width=True)
                 
-                if abs(ts) < 4: st.success("✅ 적절한 예측")
-                else: st.warning("⚠️ 모델 재검토 필요")
             except Exception as e:
                 st.error(f"평가 에러: {e}")
+
     elif file:
-        st.info("👈 왼쪽에서 '예측 실행'을 눌러주세요.")
+        st.info("👈 왼쪽에서 '예측 실행' 버튼을 눌러주세요.")
+
+# 왼쪽 사이드바 하단 혹은 버튼 영역에 '초기화' 추가 (Left 섹션 수정 포함)
+with left:
+    if file:
+        if st.button("🗑️ 예측 수행 초기화"):
+            st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "상태", "MAE", "MdRAE", "TS"])
+            st.session_state.run_model = False
+            st.rerun()
