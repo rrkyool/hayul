@@ -139,7 +139,7 @@ with top_right:
         st.write("") # 간격
         btn_run = st.button("🚀 예측 실행", use_container_width=True, type="primary")
         if st.button("🗑️ 로그 초기화", use_container_width=True):
-            st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "상태", "MAE", "MdRAE", "TS", "예측 평균"])
+            st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "MAE", "MdRAE", "TS", "예측 평균"])
             st.session_state.eval_preds = {}
             st.rerun()
 
@@ -163,7 +163,7 @@ if file and btn_run:
     r_val = round(mdrae(test_set, test_preds), 2)
     ts_val = round(tracking_signal(test_set, test_preds), 2)
     
-    new_entry = pd.DataFrame([{"모델 종류": m_type, "평가 방법": "Rolling", "MAE": m_val, "MdRAE": r_val, "TS": ts_val, "예측 평균": avg_f}])
+    new_entry = pd.DataFrame([{"모델 종류": m_type, "평가 방법": e_type, "MAE": m_val, "MdRAE": r_val, "TS": ts_val, "예측 평균": avg_f}])
     st.session_state.results_df = pd.concat([st.session_state.results_df, new_entry], ignore_index=True)
 
 if not st.session_state.results_df.empty:
@@ -186,7 +186,7 @@ if not st.session_state.results_df.empty:
 
     with bot_right:
         with st.container(border=True):
-            st.subheader("📊 수요 예측 결과 (전체 흐름)")
+            st.subheader("📊 수요 예측 결과")
             
             freq_dict = {"일": "D", "주": "W", "월": "MS", "년": "YS"}
             future_dates = pd.date_range(df.index[-1], periods=h_len+1, freq=freq_dict[u_type])[1:]
