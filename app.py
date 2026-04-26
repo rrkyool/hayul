@@ -16,8 +16,14 @@ from pmdarima import auto_arima
 st.set_page_config(layout="wide")
 st.title("📈 시계열 분석 Project1 수요 예측")
 
+# 세션 상태 초기화
 if "run_model" not in st.session_state:
     st.session_state.run_model = False
+
+if "results_df" not in st.session_state:
+    st.session_state.results_df = pd.DataFrame(
+        columns=["모델 종류", "평가 방법", "상태", "MAE", "MdRAE", "TS"]
+    )
 
 # -----------------------------
 # 분석 함수
@@ -125,63 +131,42 @@ with left:
             horizon = st.number_input("예측 길이", 5, 200, 30)
             unit = st.selectbox("단위", ["일", "주", "월", "년"])
             eval_type = st.selectbox("평가 방식", ["rolling", "expanding"])
+            
             if st.button("🚀 예측 실행"):
                 st.session_state.run_model = True
-                
-# 왼쪽 사이드바 하단 혹은 버튼 영역에 '초기화' 추가 (Left 섹션 수정 포함)
-with left:
-    if file:
+
         if st.button("🗑️ 예측 수행 초기화"):
             st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "상태", "MAE", "MdRAE", "TS"])
             st.session_state.run_model = False
             st.rerun()
 
-
 with right:
-    # 세션 상태 초기화 (결과 저장용)
-    if "results_df" not in st.session_state:
-        st.session_state.results_df = pd.DataFrame(
-            columns=["모델 종류", "평가 방법", "상태", "MAE", "MdRAE", "TS"]
-        )
-
     if file and st.session_state.run_model:
         split = int(len(df) * 0.8)
         train, test = df[value_col][:split], df[value_col][split:]
         
+        # 1. 모델 예측 및 시각화 섹션
         with st.container(border=True):
-            # 요청하신 제목 형식 반영: "시평 = x(단위)"
-            chart_title = f"Test Data vs 예측 결과 (시평 = {horizon}({unit}))"
-            st.subheader(f"📊 {chart_title}")
+            chart_title = f"시평 = {horizon}({unit})"
+            st.subheader(f"📊 Test Data vs 예측 결과 ({chart_title})")
             
             try:
-                with st.spinner("최적 모델 구성 중..."):
-                    # 1. 모델별 예측 및 최적 파라미터 도출
+                with st.spinner(f"{model_type} 모델 분석 중..."):
                     if model_type == "이동평균":
                         forecast = np.repeat(train.rolling(5).mean().iloc[-1], horizon)
-                    
                     elif model_type == "지수평활":
                         forecast = ExponentialSmoothing(train).fit().forecast(horizon)
-                    
                     elif model_type == "Holt-Winters":
                         forecast = ExponentialSmoothing(train, trend="add", seasonal="add", seasonal_periods=12).fit().forecast(horizon)
-                    
                     elif model_type in ["ARIMA", "SARIMA"]:
-                        # 속도 제한을 둔 AutoARIMA
                         is_seasonal = True if model_type == "SARIMA" else False
                         auto_model = auto_arima(
-                            train, 
-                            seasonal=is_seasonal, 
-                            m=12 if is_seasonal else 1,
-                            stepwise=True, 
-                            max_p=3, max_q=3,
-                            suppress_warnings=True,
-                            error_action='ignore'
+                            train, seasonal=is_seasonal, m=12 if is_seasonal else 1,
+                            stepwise=True, max_p=3, max_q=3, suppress_warnings=True, error_action='ignore'
                         )
                         forecast = auto_model.predict(n_periods=horizon)
-                        # 평가 함수에서 재사용하기 위해 모델 저장
-                        st.session_state.current_model = auto_model
 
-                # 2. 시각화 (이미지 스타일 유지)
+                # 시각화 출력
                 freq_map = {"일": "D", "주": "W", "월": "M", "년": "Y"}
                 future_idx = pd.date_range(df.index[-1], periods=horizon+1, freq=freq_map[unit])[1:]
                 
@@ -189,14 +174,17 @@ with right:
                 fig_res.add_trace(go.Scatter(x=train.index, y=train, name="Train", mode='lines+markers', line=dict(color='#1f77b4')))
                 fig_res.add_trace(go.Scatter(x=test.index, y=test, name="Test", mode='lines+markers', line=dict(color='#ff7f0e')))
                 fig_res.add_trace(go.Scatter(x=future_idx, y=forecast, name="Predicted", mode='lines+markers', line=dict(color='#2ca02c', dash='dot')))
-                
-                fig_res.update_layout(title=chart_title, hovermode="x unified")
+                fig_res.update_layout(title=f"Test Data vs 예측 결과 ({chart_title})", hovermode="x unified")
                 st.plotly_chart(fig_res, use_container_width=True)
+
+                # 수치적 결과 요약 제시
+                st.info(f"💡 **예상 수요 요약:** 향후 {horizon}{unit} 동안 평균 **{round(np.mean(forecast), 2)}**의 수요가 예상되며, "
+                        f"범위는 **{round(np.min(forecast), 2)} ~ {round(np.max(forecast), 2)}** 사이입니다.")
                 
             except Exception as e:
                 st.error(f"모델 실행 에러: {e}")
 
-        # 3. 평가 및 로그 누적 섹션
+        # 2. 평가 및 로그 누적 섹션
         with st.container(border=True):
             st.subheader("📏 평가 결과 및 로그")
             try:
@@ -211,30 +199,38 @@ with right:
                     
                     # 로그 누적
                     new_data = pd.DataFrame([{
-                        "모델 종류": model_type,
-                        "평가 방법": eval_type,
-                        "상태": status,
-                        "MAE": round(m, 2),
-                        "MdRAE": round(r, 2),
-                        "TS": round(ts, 2)
+                        "모델 종류": model_type, "평가 방법": eval_type, "상태": status,
+                        "MAE": round(m, 2), "MdRAE": round(r, 2), "TS": round(ts, 2)
                     }])
                     st.session_state.results_df = pd.concat([st.session_state.results_df, new_data], ignore_index=True)
 
-                    # 지표 출력
+                    # 지표 출력 및 가이드 제공
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("MAE", round(m, 2))
-                    c2.metric("MdRAE", round(r, 2))
-                    c3.metric("TS", round(ts, 2))
+                    with c1:
+                        st.metric("MAE (평균 오차)", round(m, 2))
+                        st.caption("정확도 지표 (낮을수록 좋음)")
+                    with c2:
+                        st.metric("MdRAE (상대 오차)", round(r, 2))
+                        st.caption("1보다 작으면 기본 모델보다 우수")
+                    with c3:
+                        st.metric("TS (추적 신호)", round(ts, 2))
+                        st.caption("±4 범위를 벗어나면 편향 발생")
 
-                    if status == "PASS": st.success("✅ 적절한 예측입니다.")
-                    else: st.warning("⚠️ 모델 재검토가 필요합니다.")
+                    if status == "PASS":
+                        st.success("✅ 현재 예측 모델의 성능이 안정적인 범위(TS < 4) 안에 있습니다.")
+                    else:
+                        st.warning("⚠️ 모델 재검토가 필요합니다. 예측값이 한쪽으로 치우치고 있습니다.")
 
                     st.divider()
                     st.write("📋 **누적 분석 로그**")
                     st.dataframe(st.session_state.results_df, use_container_width=True)
+                    
+                    # 실행 완료 후 상태 초기화 (중복 실행 방지)
+                    st.session_state.run_model = False
                 
             except Exception as e:
                 st.error(f"평가 에러: {e}")
+                st.session_state.run_model = False
 
     elif file:
-        st.info("👈 왼쪽에서 '예측 실행' 버튼을 눌러주세요.")
+        st.info("👈 왼쪽에서 모델 옵션을 선택한 후 '예측 실행' 버튼을 눌러주세요.")
