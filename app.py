@@ -180,7 +180,7 @@ with top_right:
 df = df_raw_data.copy()
 if file and btn_run:
     split_idx = int(len(df) * 0.8)
-    train_set, test_set = df[val_col][:split_idx], df[val_col][split_idx:]
+    train_set, test_set = df[value_col][:split_idx], df[val_col][split_idx:]
     
     # 1. 시뮬레이션 (평가용)
     test_preds = run_eval_simulation(train_set, test_set, m_type)
