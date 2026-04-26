@@ -121,29 +121,24 @@ def get_best_forecast(train, horizon, model_type):
     return np.repeat(train.iloc[-1], horizon)
 
 def run_eval_simulation(train, test, model_type, eval_type):
-    # 전체 데이터를 합쳐서 슬라이싱 준비 (인덱스 보존을 위해 Series로 관리)
+    # 인덱스 보존을 위해 Series로 관리
     full_series = pd.concat([train, test])
     preds = []
     
     # Rolling 시 유지할 고정 창 크기
     window_size = len(train)
     
-    # test 데이터의 각 시점(t)에 대해 예측 수행
     for i in range(len(test)):
-        # 현재 예측해야 할 시점의 위치 인덱스
         current_idx = len(train) + i
         
         if eval_type == "Rolling":
-            # [Rolling] 시작점도 같이 뒤로 밀림 (고정 크기 윈도우)
-            # 예: 0~100 -> 1~101 -> 2~102
-            start_pos = i
-            current_train = full_series.iloc[start_pos:current_idx]
+            # [Rolling] 시작점을 강제로 i만큼 밀어버림 (과거 데이터 완전 배제)
+            current_train = full_series.iloc[i : current_idx]
         else:
-            # [Expanding] 시작점은 고정, 끝점만 늘어남 (누적 데이터)
-            # 예: 0~100 -> 0~101 -> 0~102
-            current_train = full_series.iloc[:current_idx]
+            # [Expanding] 0부터 현재까지 모든 데이터 포함
+            current_train = full_series.iloc[0 : current_idx]
             
-        # 예측 수행 (시점 하나만 예측)
+        # 단일 시점 예측 수행
         yhat = get_best_forecast(current_train, 1, model_type)[0]
         preds.append(yhat)
         
@@ -209,12 +204,12 @@ if file and btn_run:
     
     # 2. 미래 예측 (전체 데이터 기반)
     forecast_vals = get_best_forecast(df[value_col], h_len, m_type)
-    avg_f = round(float(np.mean(forecast_vals)), 1)
+    avg_f = round(float(np.mean(forecast_vals)), 2)
     
     # 3. 지표 계산
-    m_val = round(mae(test_set, test_preds), 2)
-    r_val = round(mdrae(test_set, test_preds), 2)
-    ts_val = round(tracking_signal(test_set, test_preds), 2)
+    m_val = round(mae(test_set, test_preds), 4)
+    r_val = round(mdrae(test_set, test_preds), 4)
+    ts_val = round(tracking_signal(test_set, test_preds), 4)
     
     
     new_entry = pd.DataFrame([{
@@ -238,7 +233,7 @@ if not st.session_state.results_df.empty:
             st.markdown("**💡 지표 참고 사항**: MAE(낮을수록 우수), MdRAE(<1 우수), TS(±4 이내 정상)")
             
             fig_eval = go.Figure()
-            fig_eval.add_trace(go.Scatter(x=test_set.index, y=test_set, name="Actual", mode='lines+markers', line=dict(color="yellow")))
+            fig_eval.add_trace(go.Scatter(x=test_set.index, y=test_set, name="Actual", line=dict(color="yellow", dash='dot')))
             for name, preds in st.session_state.eval_preds.items():
                 fig_eval.add_trace(go.Scatter(x=test_set.index, y=preds, name=f"Pred({name})", line=dict(dash='dot')))
             fig_eval.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1))
