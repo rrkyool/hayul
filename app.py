@@ -235,28 +235,25 @@ with top_right:
             st.rerun()
 
 # -----------------------------
-# [분석 실행부] 하율 님의 로직 유지
+# 분석 실행 로직
 # -----------------------------
-
 if file and btn_run:
     df = df_raw_data.copy()
     split_idx = int(len(df) * 0.8)
-    # iloc 사용을 위해 명확하게 분리
     train_set, test_set = df[value_col].iloc[:split_idx], df[value_col].iloc[split_idx:]
     
-    # [1] Spinner 추가로 실행 중임을 알림
     with st.spinner(f"🚀 {m_type} ({e_type}) 분석 중..."):
-        # [핵심] 선택한 평가 방식에 따라 다른 함수 호출 (하율 님 로직)
+        # [핵심] 평가 방식 호출
         if e_type == "Rolling":
             test_preds = rolling_forecast(train_set, test_set, m_type)
         else:
             test_preds = expanding_forecast(train_set, test_set, m_type)
             
-        # 결과 저장 (키값에 e_type을 포함해야 그래프가 겹치지 않음)
+        # 결과 저장
         eval_key = f"{m_type}_{e_type}"
         st.session_state.eval_preds[eval_key] = test_preds
         
-        # 미래 예측 (속도 개선을 위해 max_p, q 제한)
+        # 미래 예측 수행
         forecast_vals = get_best_forecast(df[value_col], h_len, m_type)
         avg_f = round(float(np.mean(forecast_vals)), 1)
         
@@ -271,42 +268,53 @@ if file and btn_run:
         }])
         st.session_state.results_df = pd.concat([st.session_state.results_df, new_entry], ignore_index=True)
 
-
-    if not st.session_state.results_df.empty:
-        bot_left, bot_right = st.columns([1, 1.2])
-        
-        with bot_left:
-            with st.container(border=True):
-                st.subheader("📏 평가 결과 및 로그")
-                st.dataframe(st.session_state.results_df, use_container_width=True, hide_index=True)
-                st.markdown("**💡 지표 참고 사항**: MAE(낮음 우수), MdRAE(<1 우수), TS(±4 정상)")
-                
-                # 누적 시뮬레이션 비교 차트
-                actual_y = df[val_col].iloc[split_idx:]
-                fig_eval = go.Figure()
-                fig_eval.add_trace(go.Scatter(x=actual_y.index, y=actual_y, name="Actual", line=dict(color="green", dash='dot')))
-                for name, p_vals in st.session_state.eval_preds.items():
-                    fig_eval.add_trace(go.Scatter(x=actual_y.index, y=p_vals, name=f"Pred({name})", line=dict(dash='dot')))
-                fig_eval.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1))
-                st.plotly_chart(fig_eval, use_container_width=True)
+# -----------------------------
+# 하단 레이아웃 (버튼 클릭 여부와 상관없이 결과가 있으면 표시)
+# -----------------------------
+if not st.session_state.results_df.empty:
+    # 데이터 재정의 (그래프용)
+    df = df_raw_data.copy()
+    split_idx = int(len(df) * 0.8)
     
-        with bot_right:
-            with st.container(border=True):
-                st.subheader("📊 수요 예측 결과")
-                
-                # 마지막 실행 결과 기반으로 미래 그래프 그림
-                # (마지막 예측 결과를 찾기 위해 get_best_forecast 재호출 방지 로직 필요시 추가)
-                freq_map = {"일": "D", "월": "MS", "년": "YS"}
-                future_dates = pd.date_range(df.index[-1], periods=h_len+1, freq=freq_map[u_type])[1:]
-                
-                fig_all = go.Figure()
-                fig_all.add_trace(go.Scatter(x=df.index, y=df[val_col], name="과거 데이터", line=dict(color="#1f77b4")))
-                # 가장 최근의 forecast_vals가 정의되었을 때만 그림
-                if 'forecast_vals' in locals():
-                    fig_all.add_trace(go.Scatter(x=future_dates, y=forecast_vals, name="미래 예측", line=dict(color="#ef553b", width=3)))
-                
-                fig_all.update_layout(height=420, margin=dict(l=10, r=10, t=30, b=10))
-                st.plotly_chart(fig_all, use_container_width=True)
-                st.info(f"✨ **결과 요약**: 향후 {h_len}{u_type}간 평균 예상 수요는 **{st.session_state.results_df['예측 평균'].iloc[-1]}**입니다.")
-    else:
-        st.info("👈 설정 후 '예측 실행' 버튼을 눌러 분석을 시작하세요. (에러 메시지가 아닌 안내 문구입니다.)")
+    bot_left, bot_right = st.columns([1, 1.2])
+    
+    with bot_left:
+        with st.container(border=True):
+            st.subheader("📏 평가 결과 및 로그")
+            st.dataframe(st.session_state.results_df, use_container_width=True, hide_index=True)
+            st.markdown("**💡 지표 참고 사항**: MAE(낮음 우수), MdRAE(<1 우수), TS(±4 정상)")
+            
+            # 누적 시뮬레이션 그래프
+            actual_y = df[value_col].iloc[split_idx:]
+            fig_eval = go.Figure()
+            fig_eval.add_trace(go.Scatter(x=actual_y.index, y=actual_y, name="Actual", line=dict(color="green", dash='dot')))
+            for name, p_vals in st.session_state.eval_preds.items():
+                fig_eval.add_trace(go.Scatter(x=actual_y.index, y=p_vals, name=f"Pred({name})", line=dict(dash='dot')))
+            
+            fig_eval.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1))
+            st.plotly_chart(fig_eval, use_container_width=True)
+
+    with bot_right:
+        with st.container(border=True):
+            st.subheader("📊 수요 예측 결과")
+            
+            # 미래 날짜 및 예측값 계산
+            freq_map = {"일": "D", "월": "MS", "년": "YS"}
+            future_dates = pd.date_range(df.index[-1], periods=h_len+1, freq=freq_map[u_type])[1:]
+            
+            # 마지막 로그에 기록된 모델로 다시 미래 예측 수행 (시각화 유지용)
+            last_model = st.session_state.results_df["모델 종류"].iloc[-1]
+            final_forecast = get_best_forecast(df[value_col], h_len, last_model)
+            
+            fig_all = go.Figure()
+            fig_all.add_trace(go.Scatter(x=df.index, y=df[value_col], name="과거 데이터", line=dict(color="#1f77b4")))
+            fig_all.add_trace(go.Scatter(x=future_dates, y=final_forecast, name="미래 예측", line=dict(color="#ef553b", width=3)))
+            
+            fig_all.update_layout(height=420, margin=dict(l=10, r=10, t=30, b=10))
+            st.plotly_chart(fig_all, use_container_width=True)
+            
+            last_avg = st.session_state.results_df['예측 평균'].iloc[-1]
+            st.info(f"✨ **결과 요약**: 향후 {h_len}{u_type}간 평균 예상 수요는 **{last_avg}**입니다.")
+            
+elif file:
+    st.info("👈 설정 후 '예측 실행' 버튼을 눌러 분석을 시작하세요.")
