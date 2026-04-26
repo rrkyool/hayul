@@ -121,27 +121,31 @@ def get_best_forecast(train, horizon, model_type):
     return np.repeat(train.iloc[-1], horizon)
 
 def run_eval_simulation(train, test, model_type, eval_type):
-    # 전체 데이터를 하나로 합쳐서 시뮬레이션 준비
-    history = list(train)
+    # 전체 데이터를 합쳐서 슬라이싱 준비 (인덱스 보존을 위해 Series로 관리)
+    full_series = pd.concat([train, test])
     preds = []
     
-    # Rolling 방식일 경우 유지할 윈도우 크기 (최초 train 크기)
+    # Rolling 시 유지할 고정 창 크기
     window_size = len(train)
     
+    # test 데이터의 각 시점(t)에 대해 예측 수행
     for i in range(len(test)):
+        # 현재 예측해야 할 시점의 위치 인덱스
+        current_idx = len(train) + i
+        
         if eval_type == "Rolling":
-            # [Rolling] 가장 최근의 window_size만큼만 잘라서 학습
-            current_train = history[-window_size:]
+            # [Rolling] 시작점도 같이 뒤로 밀림 (고정 크기 윈도우)
+            # 예: 0~100 -> 1~101 -> 2~102
+            start_pos = i
+            current_train = full_series.iloc[start_pos:current_idx]
         else:
-            # [Expanding] 처음부터 현재 시점까지 모든 누적 데이터 학습
-            current_train = history
+            # [Expanding] 시작점은 고정, 끝점만 늘어남 (누적 데이터)
+            # 예: 0~100 -> 0~101 -> 0~102
+            current_train = full_series.iloc[:current_idx]
             
-        # 예측 수행
+        # 예측 수행 (시점 하나만 예측)
         yhat = get_best_forecast(current_train, 1, model_type)[0]
         preds.append(yhat)
-        
-        # 실제값을 history에 추가하여 다음 시점 준비
-        history.append(test.iloc[i])
         
     return np.array(preds)
 
@@ -234,7 +238,7 @@ if not st.session_state.results_df.empty:
             st.markdown("**💡 지표 참고 사항**: MAE(낮을수록 우수), MdRAE(<1 우수), TS(±4 이내 정상)")
             
             fig_eval = go.Figure()
-            fig_eval.add_trace(go.Scatter(x=test_set.index, y=test_set, name="Actual", mode='lines+markers', line=dict(color="black")))
+            fig_eval.add_trace(go.Scatter(x=test_set.index, y=test_set, name="Actual", mode='lines+markers', line=dict(color="lightgreen")))
             for name, preds in st.session_state.eval_preds.items():
                 fig_eval.add_trace(go.Scatter(x=test_set.index, y=preds, name=f"Pred({name})", line=dict(dash='dot')))
             fig_eval.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1))
