@@ -149,12 +149,13 @@ with right:
         train, test = df[value_col][:split], df[value_col][split:]
         
         with st.container(border=True):
-            st.subheader(f"📊 Test Data vs 예측 결과 (시평={horizon})")
+            # 요청하신 제목 형식 반영: "시평 = x(단위)"
+            chart_title = f"Test Data vs 예측 결과 (시평 = {horizon}({unit}))"
+            st.subheader(f"📊 {chart_title}")
+            
             try:
-                with st.spinner("최적의 파라미터를 찾는 중... (잠시만 기다려주세요)"):
-                    # --------------------------------------------------
-                    # 모델별 예측 로직 (ARIMA/SARIMA 통합 및 자동화)
-                    # --------------------------------------------------
+                with st.spinner("최적 모델 구성 중..."):
+                    # 1. 모델별 예측 및 최적 파라미터 도출
                     if model_type == "이동평균":
                         forecast = np.repeat(train.rolling(5).mean().iloc[-1], horizon)
                     
@@ -165,25 +166,22 @@ with right:
                         forecast = ExponentialSmoothing(train, trend="add", seasonal="add", seasonal_periods=12).fit().forecast(horizon)
                     
                     elif model_type in ["ARIMA", "SARIMA"]:
-                        # ARIMA는 계절성 미반영(seasonal=False), SARIMA는 반영(seasonal=True)
+                        # 속도 제한을 둔 AutoARIMA
                         is_seasonal = True if model_type == "SARIMA" else False
-                        
-                        # 실행 시간 단축을 위한 제한 조건 설정
                         auto_model = auto_arima(
                             train, 
                             seasonal=is_seasonal, 
                             m=12 if is_seasonal else 1,
-                            stepwise=True,          # 최적 조합을 빠르게 탐색
-                            suppress_warnings=True, 
-                            max_p=3, max_q=3,       # 탐색 범위 제한으로 속도 향상
-                            max_P=1, max_Q=1,
+                            stepwise=True, 
+                            max_p=3, max_q=3,
+                            suppress_warnings=True,
                             error_action='ignore'
                         )
                         forecast = auto_model.predict(n_periods=horizon)
-                    
-                    # --------------------------------------------------
+                        # 평가 함수에서 재사용하기 위해 모델 저장
+                        st.session_state.current_model = auto_model
 
-                # 날짜 인덱스 및 시각화 (기존 스타일 유지)
+                # 2. 시각화 (이미지 스타일 유지)
                 freq_map = {"일": "D", "주": "W", "월": "M", "년": "Y"}
                 future_idx = pd.date_range(df.index[-1], periods=horizon+1, freq=freq_map[unit])[1:]
                 
@@ -192,45 +190,51 @@ with right:
                 fig_res.add_trace(go.Scatter(x=test.index, y=test, name="Test", mode='lines+markers', line=dict(color='#ff7f0e')))
                 fig_res.add_trace(go.Scatter(x=future_idx, y=forecast, name="Predicted", mode='lines+markers', line=dict(color='#2ca02c', dash='dot')))
                 
-                fig_res.update_layout(title=f"Test Data vs 예측 결과 (시평={horizon},"(",{unit},")")", hovermode="x unified")
+                fig_res.update_layout(title=chart_title, hovermode="x unified")
                 st.plotly_chart(fig_res, use_container_width=True)
                 
             except Exception as e:
                 st.error(f"모델 실행 에러: {e}")
 
-        # 평가 및 로그 누적 섹션 (동일 유지)
+        # 3. 평가 및 로그 누적 섹션
         with st.container(border=True):
             st.subheader("📏 평가 결과 및 로그")
             try:
-                if eval_type == "rolling":
-                    preds = rolling_forecast(train, test, model_type)
-                else:
-                    preds = expanding_forecast(train, test, model_type)
-                
-                m, r, ts = mae(test, preds), mdrae(test, preds), tracking_signal(test, preds)
-                status = "PASS" if abs(ts) < 4 else "FAIL"
-                
-                new_data = pd.DataFrame([{
-                    "모델 종류": model_type,
-                    "평가 방법": eval_type,
-                    "상태": status,
-                    "MAE": round(m, 2),
-                    "MdRAE": round(r, 2),
-                    "TS": round(ts, 2)
-                }])
-                st.session_state.results_df = pd.concat([st.session_state.results_df, new_data], ignore_index=True)
+                with st.spinner("성능 평가 중..."):
+                    if eval_type == "rolling":
+                        preds = rolling_forecast(train, test, model_type)
+                    else:
+                        preds = expanding_forecast(train, test, model_type)
+                    
+                    m, r, ts = mae(test, preds), mdrae(test, preds), tracking_signal(test, preds)
+                    status = "PASS" if abs(ts) < 4 else "FAIL"
+                    
+                    # 로그 누적
+                    new_data = pd.DataFrame([{
+                        "모델 종류": model_type,
+                        "평가 방법": eval_type,
+                        "상태": status,
+                        "MAE": round(m, 2),
+                        "MdRAE": round(r, 2),
+                        "TS": round(ts, 2)
+                    }])
+                    st.session_state.results_df = pd.concat([st.session_state.results_df, new_data], ignore_index=True)
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("MAE", round(m, 2))
-                c2.metric("MdRAE", round(r, 2))
-                c3.metric("TS", round(ts, 2))
+                    # 지표 출력
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("MAE", round(m, 2))
+                    c2.metric("MdRAE", round(r, 2))
+                    c3.metric("TS", round(ts, 2))
 
-                if status == "PASS": st.success("✅ 적절한 예측입니다.")
-                else: st.warning("⚠️ 모델 재검토가 필요합니다.")
+                    if status == "PASS": st.success("✅ 적절한 예측입니다.")
+                    else: st.warning("⚠️ 모델 재검토가 필요합니다.")
 
-                st.write("---")
-                st.write("📋 **누적 분석 로그**")
-                st.dataframe(st.session_state.results_df, use_container_width=True)
+                    st.divider()
+                    st.write("📋 **누적 분석 로그**")
+                    st.dataframe(st.session_state.results_df, use_container_width=True)
                 
             except Exception as e:
                 st.error(f"평가 에러: {e}")
+
+    elif file:
+        st.info("👈 왼쪽에서 '예측 실행' 버튼을 눌러주세요.")
