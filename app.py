@@ -187,7 +187,7 @@ if file and btn_run:
     st.session_state.eval_preds[m_type] = test_preds
     
     # 2. 미래 예측 (전체 데이터 기반)
-    forecast_vals = get_best_forecast(df[val_col], h_len, m_type)
+    forecast_vals = get_best_forecast(df[value_col], h_len, m_type)
     avg_f = round(float(np.mean(forecast_vals)), 1)
     
     # 3. 지표 계산 및 로그 저장
@@ -226,7 +226,7 @@ if not st.session_state.results_df.empty:
             # [수정] Train + Test 전체를 포함한 시각화
             fig_all = go.Figure()
             # 과거 데이터 전체 (Train + Test)
-            fig_all.add_trace(go.Scatter(x=df.index, y=df[val_col], name="과거 데이터", line=dict(color="#1f77b4")))
+            fig_all.add_trace(go.Scatter(x=df.index, y=df[value_col], name="과거 데이터", line=dict(color="#1f77b4")))
             # 미래 예측 데이터 (과거의 마지막 시점과 연결)
             fig_all.add_trace(go.Scatter(x=future_dates, y=forecast_vals, name="미래 예측", line=dict(color="#ef553b", width=3)))
             
