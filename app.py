@@ -238,7 +238,7 @@ if not st.session_state.results_df.empty:
             st.markdown("**💡 지표 참고 사항**: MAE(낮을수록 우수), MdRAE(<1 우수), TS(±4 이내 정상)")
             
             fig_eval = go.Figure()
-            fig_eval.add_trace(go.Scatter(x=test_set.index, y=test_set, name="Actual", mode='lines+markers', line=dict(color="lightgreen")))
+            fig_eval.add_trace(go.Scatter(x=test_set.index, y=test_set, name="Actual", mode='lines+markers', line=dict(color="yellow")))
             for name, preds in st.session_state.eval_preds.items():
                 fig_eval.add_trace(go.Scatter(x=test_set.index, y=preds, name=f"Pred({name})", line=dict(dash='dot')))
             fig_eval.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1))
