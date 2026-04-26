@@ -273,40 +273,40 @@ if file and btn_run:
 
 
 if not st.session_state.results_df.empty:
-        bot_left, bot_right = st.columns([1, 1.2])
-        
-        with bot_left:
-            with st.container(border=True):
-                st.subheader("📏 평가 결과 및 로그")
-                st.dataframe(st.session_state.results_df, use_container_width=True, hide_index=True)
-                st.markdown("**💡 지표 참고 사항**: MAE(낮음 우수), MdRAE(<1 우수), TS(±4 정상)")
-                
-                # 누적 시뮬레이션 비교 차트
-                actual_y = df[val_col].iloc[split_idx:]
-                fig_eval = go.Figure()
-                fig_eval.add_trace(go.Scatter(x=actual_y.index, y=actual_y, name="Actual", line=dict(color="green", dash='dot')))
-                for name, p_vals in st.session_state.eval_preds.items():
-                    fig_eval.add_trace(go.Scatter(x=actual_y.index, y=p_vals, name=f"Pred({name})", line=dict(dash='dot')))
-                fig_eval.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1))
-                st.plotly_chart(fig_eval, use_container_width=True)
+    bot_left, bot_right = st.columns([1, 1.2])
+    
+    with bot_left:
+        with st.container(border=True):
+            st.subheader("📏 평가 결과 및 로그")
+            st.dataframe(st.session_state.results_df, use_container_width=True, hide_index=True)
+            st.markdown("**💡 지표 참고 사항**: MAE(낮음 우수), MdRAE(<1 우수), TS(±4 정상)")
+            
+            # 누적 시뮬레이션 비교 차트
+            actual_y = df[val_col].iloc[split_idx:]
+            fig_eval = go.Figure()
+            fig_eval.add_trace(go.Scatter(x=actual_y.index, y=actual_y, name="Actual", line=dict(color="green", dash='dot')))
+            for name, p_vals in st.session_state.eval_preds.items():
+                fig_eval.add_trace(go.Scatter(x=actual_y.index, y=p_vals, name=f"Pred({name})", line=dict(dash='dot')))
+            fig_eval.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1))
+            st.plotly_chart(fig_eval, use_container_width=True)
 
-        with bot_right:
-            with st.container(border=True):
-                st.subheader("📊 수요 예측 결과")
-                
-                # 마지막 실행 결과 기반으로 미래 그래프 그림
-                # (마지막 예측 결과를 찾기 위해 get_best_forecast 재호출 방지 로직 필요시 추가)
-                freq_map = {"일": "D", "월": "MS", "년": "YS"}
-                future_dates = pd.date_range(df.index[-1], periods=h_len+1, freq=freq_map[u_type])[1:]
-                
-                fig_all = go.Figure()
-                fig_all.add_trace(go.Scatter(x=df.index, y=df[val_col], name="과거 데이터", line=dict(color="#1f77b4")))
-                # 가장 최근의 forecast_vals가 정의되었을 때만 그림
-                if 'forecast_vals' in locals():
-                    fig_all.add_trace(go.Scatter(x=future_dates, y=forecast_vals, name="미래 예측", line=dict(color="#ef553b", width=3)))
-                
-                fig_all.update_layout(height=420, margin=dict(l=10, r=10, t=30, b=10))
-                st.plotly_chart(fig_all, use_container_width=True)
-                st.info(f"✨ **결과 요약**: 향후 {h_len}{u_type}간 평균 예상 수요는 **{st.session_state.results_df['예측 평균'].iloc[-1]}**입니다.")
-    else:
-        st.info("👈 설정 후 '예측 실행' 버튼을 눌러 분석을 시작하세요. (에러 메시지가 아닌 안내 문구입니다.)")
+    with bot_right:
+        with st.container(border=True):
+            st.subheader("📊 수요 예측 결과")
+            
+            # 마지막 실행 결과 기반으로 미래 그래프 그림
+            # (마지막 예측 결과를 찾기 위해 get_best_forecast 재호출 방지 로직 필요시 추가)
+            freq_map = {"일": "D", "월": "MS", "년": "YS"}
+            future_dates = pd.date_range(df.index[-1], periods=h_len+1, freq=freq_map[u_type])[1:]
+            
+            fig_all = go.Figure()
+            fig_all.add_trace(go.Scatter(x=df.index, y=df[val_col], name="과거 데이터", line=dict(color="#1f77b4")))
+            # 가장 최근의 forecast_vals가 정의되었을 때만 그림
+            if 'forecast_vals' in locals():
+                fig_all.add_trace(go.Scatter(x=future_dates, y=forecast_vals, name="미래 예측", line=dict(color="#ef553b", width=3)))
+            
+            fig_all.update_layout(height=420, margin=dict(l=10, r=10, t=30, b=10))
+            st.plotly_chart(fig_all, use_container_width=True)
+            st.info(f"✨ **결과 요약**: 향후 {h_len}{u_type}간 평균 예상 수요는 **{st.session_state.results_df['예측 평균'].iloc[-1]}**입니다.")
+else:
+    st.info("👈 설정 후 '예측 실행' 버튼을 눌러 분석을 시작하세요. (에러 메시지가 아닌 안내 문구입니다.)")
