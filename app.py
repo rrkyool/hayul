@@ -15,6 +15,7 @@ from pmdarima import auto_arima
 # -----------------------------
 st.set_page_config(layout="wide")
 st.title("📈 시계열 분석 Project1 수요 예측")
+st.subtitle("C321032 박하율")
 
 if "run_model" not in st.session_state:
     st.session_state.run_model = False
@@ -24,12 +25,11 @@ if "results_df" not in st.session_state:
         columns=["모델 종류", "평가 방법", "상태", "MAE", "MdRAE", "TS"]
     )
 
-# 모든 모델의 평가 결과를 저장할 딕셔너리
 if "eval_preds" not in st.session_state:
     st.session_state.eval_preds = {}
 
 # -----------------------------
-# 분석 함수
+# 분석 함수 (강의 자료 가이드 반영)
 # -----------------------------
 def load_data(file):
     for enc in ["utf-8", "cp949", "euc-kr"]:
@@ -101,20 +101,35 @@ def expanding_forecast(train, test, model_type):
         preds.append(yhat)
     return np.array(preds)
 
-# 모델별 최적 학습 및 예측 함수 (성능 개선)
+# -----------------------------
+# [중요] 모델 학습 및 예측 로직 수정
+# -----------------------------
 def get_best_forecast(train, horizon, model_type):
+    train = train.astype(float)
+    
     if model_type == "이동평균":
+        # 강의자료의 window_length 반영 (임의로 12 설정)
         val = train.rolling(window=12, min_periods=1).mean().iloc[-1]
         return np.repeat(val, horizon)
     
     elif model_type == "지수평활":
-        # 단순 지수 평활보다는 최적 alpha를 찾는 구조
-        model = ExponentialSmoothing(train, trend=None, seasonal=None).fit(optimized=True)
+        # Simple Exponential Smoothing (Trend/Seasonal None)
+        model = ExponentialSmoothing(train, trend=None, seasonal=None).fit()
         return model.forecast(horizon)
     
     elif model_type == "Holt-Winters":
-        # 계절성 자동 탐색 및 최적화
-        model = ExponentialSmoothing(train, trend="add", seasonal="add", seasonal_periods=12).fit(optimized=True)
+        # 강의자료 가이드: 추세는 선형 증가(add), 계절성은 증가하므로(mul)
+        # 데이터에 0이나 음수가 있으면 mul이 에러나므로 처리
+        try:
+            model = ExponentialSmoothing(
+                train, 
+                trend="add", 
+                seasonal="mul", 
+                seasonal_periods=12
+            ).fit()
+        except:
+            # mul 에러 시 add로 대체
+            model = ExponentialSmoothing(train, trend="add", seasonal="add", seasonal_periods=12).fit()
         return model.forecast(horizon)
     
     elif model_type in ["ARIMA", "SARIMA"]:
@@ -123,10 +138,31 @@ def get_best_forecast(train, horizon, model_type):
                                     stepwise=True, suppress_warnings=True, 
                                     error_action='ignore', max_p=3, max_q=3)
         return stepwise_model.predict(n_periods=horizon)
+    
     return np.repeat(train.iloc[-1], horizon)
 
+# 평가용 시뮬레이션 함수 (학습 로직과 동일하게 유지)
+def run_eval_simulation(train, test, model_type, eval_method):
+    history = list(train)
+    preds = []
+    
+    for i in range(len(test)):
+        current_train = pd.Series(history)
+        # 각 시점마다 예측 수행
+        yhat = get_best_forecast(current_train, 1, model_type)[0]
+        preds.append(yhat)
+        
+        if eval_method == "rolling":
+            # 한 칸씩 이동하며 윈도우 유지 (여기서는 최신 데이터 추가)
+            history.append(test.iloc[i])
+        else:
+            # 전체 누적
+            history.append(test.iloc[i])
+            
+    return np.array(preds)
+
 # -----------------------------
-# 레이아웃
+# 레이아웃 및 실행
 # -----------------------------
 left, right = st.columns([1, 1.3])
 
@@ -173,9 +209,8 @@ with right:
         split = int(len(df) * 0.8)
         train, test = df[value_col][:split], df[value_col][split:]
         
-        # 1. 메인 예측 섹션
         with st.container(border=True):
-            chart_title = f"시평 = {horizon}{unit})"
+            chart_title = f"시평 = {horizon}{unit}"
             st.subheader(f"📊 수요 예측 결과 ({chart_title})")
             
             try:
@@ -189,43 +224,31 @@ with right:
                 fig_res.add_trace(go.Scatter(x=train.index, y=train, name="Train", mode='lines+markers', line=dict(color='#1f77b4')))
                 fig_res.add_trace(go.Scatter(x=test.index, y=test, name="Test", mode='lines+markers', line=dict(color='#ff7f0e')))
                 fig_res.add_trace(go.Scatter(x=future_idx, y=forecast, name="Predicted", mode='lines+markers', line=dict(color='#2ca02c', dash='dot')))
-                fig_res.update_layout(hovermode="x unified")
                 st.plotly_chart(fig_res, use_container_width=True)
-
-                st.info(f"💡 **예상 수요:** 평균 **{round(np.mean(forecast), 2)}** (범위: {round(np.min(forecast), 2)}~{round(np.max(forecast), 2)})")
             except Exception as e:
                 st.error(f"모델 실행 에러: {e}")
 
-        # 2. 평가 결과 및 로그 (이미지 스타일 시각화 포함)
         with st.container(border=True):
             st.subheader("📏 평가 결과 및 로그")
             try:
-                with st.spinner("성능 평가 및 비교 시각화 생성 중..."):
-                    # 현재 모델의 Test 구간 예측값 계산 (평가용)
-                    if eval_type == "rolling":
-                        current_preds = rolling_forecast(train, test, model_type)
-                    else:
-                        current_preds = expanding_forecast(train, test, model_type)
-                    
-                    # 세션에 현재 모델 결과 저장 (멀티 모델 시각화용)
+                with st.spinner("성능 평가 중..."):
+                    # 시뮬레이션 기반 평가 수행
+                    current_preds = run_eval_simulation(train, test, model_type, eval_type)
                     st.session_state.eval_preds[model_type] = current_preds
                     
-                    # [추가] 이미지 스타일의 멀티 모델 비교 그래프
+                    # 시각화 비교
                     fig_eval = go.Figure()
-                    fig_eval.add_trace(go.Scatter(x=train.index[-20:], y=train.iloc[-20:], name="y_train (일부)", mode='lines+markers'))
+                    fig_eval.add_trace(go.Scatter(x=train.index[-24:], y=train.iloc[-24:], name="y_train (Recent)", mode='lines+markers'))
                     fig_eval.add_trace(go.Scatter(x=test.index, y=test, name="y_test", mode='lines+markers', line=dict(color='orange')))
                     
                     for m_name, p_val in st.session_state.eval_preds.items():
                         fig_eval.add_trace(go.Scatter(x=test.index, y=p_val, name=f"Predicted ({m_name})", mode='lines+markers', line=dict(dash='dash')))
                     
-                    fig_eval.update_layout(title="Validation 구간 모델별 성능 비교", height=400)
                     st.plotly_chart(fig_eval, use_container_width=True)
 
-                    # 지표 계산 및 출력
                     m, r, ts = mae(test, current_preds), mdrae(test, current_preds), tracking_signal(test, current_preds)
                     status = "PASS" if abs(ts) < 4 else "FAIL"
                     
-                    # 로그 누적
                     new_data = pd.DataFrame([{
                         "모델 종류": model_type, "평가 방법": eval_type, "상태": status,
                         "MAE": round(m, 2), "MdRAE": round(r, 2), "TS": round(ts, 2)
@@ -233,22 +256,11 @@ with right:
                     st.session_state.results_df = pd.concat([st.session_state.results_df, new_data], ignore_index=True)
 
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("MAE (정확도)", round(m, 2))
-                    c2.metric("MdRAE (상대오차)", round(r, 2))
-                    c3.metric("TS (편향)", round(ts, 2))
+                    c1.metric("MAE", round(m, 2))
+                    c2.metric("MdRAE", round(r, 2))
+                    c3.metric("TS", round(ts, 2))
 
-                    if status == "PASS": st.success("✅ 적절한 예측입니다.")
-                    else: st.warning("⚠️ 모델 재검토가 필요합니다.")
-
-                    st.divider()
-                    st.write("📋 **누적 분석 로그**")
                     st.dataframe(st.session_state.results_df, use_container_width=True)
-                    
-                    st.session_state.run_model = False # 실행 완료 후 대기 상태로 전환
-                
+                    st.session_state.run_model = False
             except Exception as e:
                 st.error(f"평가 에러: {e}")
-                st.session_state.run_model = False
-
-    elif file:
-        st.info("👈 왼쪽에서 모델 옵션을 선택한 후 '예측 실행' 버튼을 눌러주세요.")
