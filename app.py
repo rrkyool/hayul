@@ -69,6 +69,37 @@ def tracking_signal(y, yhat):
     mad = np.mean(np.abs(err))
     return np.sum(err) / (mad + 1e-8)
 
+def rolling_forecast(train, test, model_type):
+    history = list(train)
+    preds = []
+    for t in range(len(test)):
+        if model_type == "ARIMA":
+            model = ARIMA(history, order=(1,1,1)).fit()
+            yhat = model.forecast()[0]
+        elif model_type == "SARIMA":
+            model = SARIMAX(history, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+            yhat = model.forecast()[0]
+        else:
+            yhat = history[-1]
+        preds.append(yhat)
+        history.append(test.iloc[t])
+    return np.array(preds)
+
+def expanding_forecast(train, test, model_type):
+    preds = []
+    for i in range(len(test)):
+        hist = pd.concat([train, test[:i]])
+        if model_type == "ARIMA":
+            model = ARIMA(hist, order=(1,1,1)).fit()
+            yhat = model.forecast()[0]
+        elif model_type == "SARIMA":
+            model = SARIMAX(hist, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+            yhat = model.forecast()[0]
+        else:
+            yhat = hist.iloc[-1]
+        preds.append(yhat)
+    return np.array(preds)
+
 def get_best_forecast(train, horizon, model_type):
     train = pd.Series(train).astype(float)
     if model_type == "이동평균":
@@ -146,6 +177,7 @@ with top_right:
 # -----------------------------
 # 분석 실행 및 결과 레이아웃
 # -----------------------------
+df = df_raw_data.copy()
 if file and btn_run:
     split_idx = int(len(df) * 0.8)
     train_set, test_set = df[val_col][:split_idx], df[val_col][split_idx:]
