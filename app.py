@@ -189,7 +189,7 @@ if file and btn_run:
         "MdRAE": r_val, 
         "TS": ts_val, 
         "예측 평균": avg_f,
-        "model_score": f"{score}/3"
+        "model_score": f"{score}"
     }])
     st.session_state.results_df = pd.concat([st.session_state.results_df, new_entry], ignore_index=True)
 
