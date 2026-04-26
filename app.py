@@ -137,10 +137,10 @@ with top_right:
         c1, c2 = st.columns(2)
         with c1:
             m_type = st.selectbox("예측 모델", ["이동평균", "지수평활", "Holt-Winters", "ARIMA", "SARIMA"])
-            e_type = st.selectbox("평가 방식", ["Rolling", "Expanding"])
+            h_len = st.number_input("예측 길이(시평)", 5, 100, 12)
             
         with c2:
-            h_len = st.number_input("예측 길이(시평)", 5, 100, 12)
+            e_type = st.selectbox("평가 방식", ["Rolling", "Expanding"])
             u_type = st.selectbox("시간 단위", ["일", "주", "월", "년"], index=2)
             
         
@@ -154,6 +154,7 @@ with top_right:
 # -----------------------------
 # [하단] 결과 및 로그
 # -----------------------------
+df = df_raw_data.copy()
 if file and 'btn_run' in locals() and btn_run:
     val_col = df.select_dtypes(include=np.number).columns[0]
     split_idx = int(len(df) * 0.8)
