@@ -15,7 +15,6 @@ from pmdarima import auto_arima
 # -----------------------------
 st.set_page_config(layout="wide")
 st.title("📈 시계열 분석 Project1 수요 예측")
-st.subtitle("C321032 박하율")
 
 if "run_model" not in st.session_state:
     st.session_state.run_model = False
