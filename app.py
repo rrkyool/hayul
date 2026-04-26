@@ -129,11 +129,11 @@ with top_right:
         c1, c2 = st.columns(2)
         with c1:
             m_type = st.selectbox("예측 모델", ["이동평균", "지수평활", "Holt-Winters", "ARIMA", "SARIMA"])
-            h_len = st.number_input("예측 길이(시평)", 5, 100, 12)
+            h_len = st.number_input("예측 길이(시평)", 1, 100, 12)
             
         with c2:
             e_type = st.selectbox("평가 방식", ["Rolling", "Expanding"])
-            u_type = st.selectbox("시간 단위", ["일", "주", "월", "년"], index=2)
+            u_type = st.selectbox("시간 단위", ["일", "월", "년"], index=2)
             
         
         st.write("") # 간격
