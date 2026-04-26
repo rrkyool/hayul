@@ -121,19 +121,28 @@ def get_best_forecast(train, horizon, model_type):
     return np.repeat(train.iloc[-1], horizon)
 
 def run_eval_simulation(train, test, model_type, eval_type):
+    # 전체 데이터를 하나로 합쳐서 시뮬레이션 준비
     history = list(train)
     preds = []
+    
+    # Rolling 방식일 경우 유지할 윈도우 크기 (최초 train 크기)
+    window_size = len(train)
+    
     for i in range(len(test)):
-        # 평가 방식에 따른 데이터셋 관리
         if eval_type == "Rolling":
-            # 가장 최근 데이터만 유지 (여기서는 train 크기만큼 유지하는 방식으로 구현)
-            current_train = history[-len(train):]
-        else: # Expanding
+            # [Rolling] 가장 최근의 window_size만큼만 잘라서 학습
+            current_train = history[-window_size:]
+        else:
+            # [Expanding] 처음부터 현재 시점까지 모든 누적 데이터 학습
             current_train = history
             
+        # 예측 수행
         yhat = get_best_forecast(current_train, 1, model_type)[0]
         preds.append(yhat)
+        
+        # 실제값을 history에 추가하여 다음 시점 준비
         history.append(test.iloc[i])
+        
     return np.array(preds)
 
 # -----------------------------
