@@ -23,7 +23,7 @@ with header_right:
 # 세션 상태 관리
 if "results_df" not in st.session_state:
     # model_score 컬럼 추가
-    st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "MAE", "MdRAE", "TS", "예측 평균", "model_score"])
+    st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "MAE", "MdRAE", "TS", "예측 평균"])
 if "eval_preds" not in st.session_state:
     st.session_state.eval_preds = {}
 
@@ -73,22 +73,51 @@ def tracking_signal(y, yhat):
 
 def get_best_forecast(train, horizon, model_type):
     train = pd.Series(train).astype(float)
+    # 데이터 부족 여부 판단 (주기 12 기준, 최소 24개 이상 권장)
+    m_val = 12
+    is_data_insufficient = len(train) < 2 * m_val
+    
     if model_type == "이동평균":
         val = train.rolling(window=12, min_periods=1).mean().iloc[-1]
         return np.repeat(val, horizon)
+    
     elif model_type == "지수평활":
         model = ExponentialSmoothing(train).fit()
         return model.forecast(horizon).values
+    
     elif model_type == "Holt-Winters":
-        try: model = ExponentialSmoothing(train, trend="add", seasonal="mul", seasonal_periods=12).fit()
-        except: model = ExponentialSmoothing(train, trend="add", seasonal="add", seasonal_periods=12).fit()
+        try: 
+            model = ExponentialSmoothing(train, trend="add", seasonal="mul", seasonal_periods=12).fit()
+        except: 
+            model = ExponentialSmoothing(train, trend="add", seasonal="add", seasonal_periods=12).fit()
         return model.forecast(horizon).values
+    
     elif model_type in ["ARIMA", "SARIMA"]:
         is_seasonal = (model_type == "SARIMA")
-        # SARIMA 작동 안정화를 위한 auto_arima 호출
-        step_m = auto_arima(train, seasonal=is_seasonal, m=12 if is_seasonal else 1, 
-                            stepwise=True, suppress_warnings=True, error_action="ignore")
-        return step_m.predict(n_periods=horizon).values
+        
+        # SARIMA 선택 시 데이터가 부족한 경우 처리
+        if is_seasonal and is_data_insufficient:
+            st.warning(f"⚠️ 계절성 분석을 위한 데이터가 부족합니다. (현재 데이터: {len(train)}개, 최소 필요: {2*m_val}개)")
+            st.info("안정적인 분석을 위해 일반 ARIMA 모델로 자동 전환하여 결과를 생성합니다.")
+            is_seasonal = False # 계절성 비활성화
+            
+        try:
+            step_m = auto_arima(
+                train, 
+                seasonal=is_seasonal, 
+                m=m_val if is_seasonal else 1, 
+                stepwise=True, 
+                suppress_warnings=True, 
+                error_action="ignore",
+                max_p=3, max_q=3,
+                trace=False
+            )
+            return step_m.predict(n_periods=horizon).values
+        except Exception as e:
+            # 최종 예외 처리
+            step_m = auto_arima(train, seasonal=False, stepwise=True)
+            return step_m.predict(n_periods=horizon).values
+            
     return np.repeat(train.iloc[-1], horizon)
 
 def run_eval_simulation(train, test, model_type, eval_type):
@@ -130,7 +159,7 @@ with top_left:
                 
                 fig_prep = go.Figure()
                 fig_prep.add_trace(go.Scatter(x=df_raw_data.index, y=raw_values, name="원본", line=dict(color="gray", width=1), opacity=0.4))
-                fig_prep.add_trace(go.Scatter(x=df_raw_data.index, y=proc_values, name="전처리", line=dict(color="#00CC96")))
+                fig_prep.add_trace(go.Scatter(x=df_raw_data.index, y=proc_values, name="전처리", line=dict(color="royalblue")))
                 fig_prep.update_layout(height=200, margin=dict(l=10, r=10, t=10, b=10))
                 st.plotly_chart(fig_prep, use_container_width=True)
 
@@ -149,7 +178,7 @@ with top_right:
         st.write("") # 간격
         btn_run = st.button("🚀 예측 실행", use_container_width=True, type="primary")
         if st.button("🗑️ 로그 초기화", use_container_width=True):
-            st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "MAE", "MdRAE", "TS", "예측 평균", "model_score"])
+            st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "MAE", "MdRAE", "TS", "예측 평균"])
             st.session_state.eval_preds = {}
             st.rerun()
 
@@ -174,13 +203,6 @@ if file and btn_run:
     r_val = round(mdrae(test_set, test_preds), 2)
     ts_val = round(tracking_signal(test_set, test_preds), 2)
     
-    # 4. model_score 계산 (3점 만점)
-    score = 0
-    if r_val < 1: score += 1 # MdRAE 기준
-    if abs(ts_val) <= 4: score += 1 # TS 기준
-    # MAE는 상대적이므로 현재 로그 내에서 최소값인지 확인 (첫 실행시 무조건 +1)
-    if st.session_state.results_df.empty or m_val <= st.session_state.results_df['MAE'].min():
-        score += 1
     
     new_entry = pd.DataFrame([{
         "모델 종류": m_type, 
@@ -188,8 +210,7 @@ if file and btn_run:
         "MAE": m_val, 
         "MdRAE": r_val, 
         "TS": ts_val, 
-        "예측 평균": avg_f,
-        "model_score": f"{score}"
+        "예측 평균": avg_f
     }])
     st.session_state.results_df = pd.concat([st.session_state.results_df, new_entry], ignore_index=True)
 
