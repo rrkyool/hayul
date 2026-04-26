@@ -321,13 +321,25 @@ if not st.session_state.results_df.empty:
             
             st.markdown("**💡 지표 참고 사항**: MAE(낮을수록 우수), MdRAE(<1 우수), TS(±4 이내 정상)")
             
-            fig_eval = go.Figure()
-            fig_eval.add_trace(go.Scatter(x=test_set.index, y=test_set, name="Actual", line=dict(color="green", dash='dot')))
-            for name, preds in st.session_state.eval_preds.items():
-                fig_eval.add_trace(go.Scatter(x=test_set.index, y=preds, name=f"Pred({name})", line=dict(dash='dot')))
-            fig_eval.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1))
-            st.plotly_chart(fig_eval, use_container_width=True)
-
+            # [수정] 결과가 있을 때만(test_set이 정의되었을 때만) 그래프를 그리도록 보장
+            if not st.session_state.results_df.empty:
+                # test_set이 정의되지 않았을 경우를 대비해 세션 등에서 다시 가져오거나 
+                # 실행 블록 내에서 생성된 변수를 활용하도록 위치를 조정해야 합니다.
+                try:
+                    fig_eval = go.Figure()
+                    # test_set 대신 df의 마지막 20% 인덱스를 직접 사용하면 더 안전합니다.
+                    actual_y = df[value_col].iloc[int(len(df)*0.8):]
+                    
+                    fig_eval.add_trace(go.Scatter(x=actual_y.index, y=actual_y, name="Actual", line=dict(color="green", dash='dot')))
+                    
+                    for name, preds in st.session_state.eval_preds.items():
+                        fig_eval.add_trace(go.Scatter(x=actual_y.index, y=preds, name=f"Pred({name})", line=dict(dash='dot')))
+                    
+                    fig_eval.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1))
+                    st.plotly_chart(fig_eval, use_container_width=True)
+                except NameError:
+                    st.info("데이터 분석을 위해 좌측의 '예측 실행' 버튼을 눌러주세요.")
+                    
     with bot_right:
         with st.container(border=True):
             st.subheader("📊 수요 예측 결과")
