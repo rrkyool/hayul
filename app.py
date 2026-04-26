@@ -121,7 +121,7 @@ with left:
     if file:
         with st.container(border=True):
             st.subheader("⚙️ 예측 설정")
-            model_type = st.selectbox("모델", ["이동평균", "지수평활", "Holt-Winters", "ARIMA", "SARIMA", "AutoARIMA"])
+            model_type = st.selectbox("모델", ["이동평균", "지수평활", "Holt-Winters", "ARIMA", "SARIMA"])
             horizon = st.number_input("예측 길이", 5, 200, 30)
             unit = st.selectbox("단위", ["일", "주", "월", "년"])
             eval_type = st.selectbox("평가 방식", ["rolling", "expanding"])
