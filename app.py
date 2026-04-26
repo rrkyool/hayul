@@ -70,6 +70,37 @@ def tracking_signal(y, yhat):
     err = y - yhat
     return err.sum() / (np.mean(np.abs(err)) + 1e-8)
 
+def rolling_forecast(train, test, model_type):
+    history = list(train)
+    preds = []
+    for t in range(len(test)):
+        if model_type == "ARIMA":
+            model = ARIMA(history, order=(1,1,1)).fit()
+            yhat = model.forecast()[0]
+        elif model_type == "SARIMA":
+            model = SARIMAX(history, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+            yhat = model.forecast()[0]
+        else:
+            yhat = history[-1]
+        preds.append(yhat)
+        history.append(test.iloc[t])
+    return np.array(preds)
+
+def expanding_forecast(train, test, model_type):
+    preds = []
+    for i in range(len(test)):
+        hist = pd.concat([train, test[:i]])
+        if model_type == "ARIMA":
+            model = ARIMA(hist, order=(1,1,1)).fit()
+            yhat = model.forecast()[0]
+        elif model_type == "SARIMA":
+            model = SARIMAX(hist, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+            yhat = model.forecast()[0]
+        else:
+            yhat = hist.iloc[-1]
+        preds.append(yhat)
+    return np.array(preds)
+
 # 모델별 최적 학습 및 예측 함수 (성능 개선)
 def get_best_forecast(train, horizon, model_type):
     if model_type == "이동평균":
@@ -144,8 +175,8 @@ with right:
         
         # 1. 메인 예측 섹션
         with st.container(border=True):
-            chart_title = f"시평 = {horizon}({unit})"
-            st.subheader(f"📊 Test Data vs 예측 결과 ({chart_title})")
+            chart_title = f"시평 = {horizon}{unit})"
+            st.subheader(f"📊 수요 예측 결과 ({chart_title})")
             
             try:
                 with st.spinner(f"{model_type} 최적화 학습 중..."):
