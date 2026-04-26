@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.statespace.sarimax import SARIMAX # SARIMA 작동을 위해 추가
 from pmdarima import auto_arima
 
 # -----------------------------
@@ -21,7 +22,8 @@ with header_right:
 
 # 세션 상태 관리
 if "results_df" not in st.session_state:
-    st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "MAE", "MdRAE", "TS", "예측 평균"])
+    # model_score 컬럼 추가
+    st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "MAE", "MdRAE", "TS", "예측 평균", "model_score"])
 if "eval_preds" not in st.session_state:
     st.session_state.eval_preds = {}
 
@@ -69,37 +71,6 @@ def tracking_signal(y, yhat):
     mad = np.mean(np.abs(err))
     return np.sum(err) / (mad + 1e-8)
 
-def rolling_forecast(train, test, model_type):
-    history = list(train)
-    preds = []
-    for t in range(len(test)):
-        if model_type == "ARIMA":
-            model = ARIMA(history, order=(1,1,1)).fit()
-            yhat = model.forecast()[0]
-        elif model_type == "SARIMA":
-            model = SARIMAX(history, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-            yhat = model.forecast()[0]
-        else:
-            yhat = history[-1]
-        preds.append(yhat)
-        history.append(test.iloc[t])
-    return np.array(preds)
-
-def expanding_forecast(train, test, model_type):
-    preds = []
-    for i in range(len(test)):
-        hist = pd.concat([train, test[:i]])
-        if model_type == "ARIMA":
-            model = ARIMA(hist, order=(1,1,1)).fit()
-            yhat = model.forecast()[0]
-        elif model_type == "SARIMA":
-            model = SARIMAX(hist, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-            yhat = model.forecast()[0]
-        else:
-            yhat = hist.iloc[-1]
-        preds.append(yhat)
-    return np.array(preds)
-
 def get_best_forecast(train, horizon, model_type):
     train = pd.Series(train).astype(float)
     if model_type == "이동평균":
@@ -114,15 +85,24 @@ def get_best_forecast(train, horizon, model_type):
         return model.forecast(horizon).values
     elif model_type in ["ARIMA", "SARIMA"]:
         is_seasonal = (model_type == "SARIMA")
-        step_m = auto_arima(train, seasonal=is_seasonal, m=12 if is_seasonal else 1, stepwise=True)
+        # SARIMA 작동 안정화를 위한 auto_arima 호출
+        step_m = auto_arima(train, seasonal=is_seasonal, m=12 if is_seasonal else 1, 
+                            stepwise=True, suppress_warnings=True, error_action="ignore")
         return step_m.predict(n_periods=horizon).values
     return np.repeat(train.iloc[-1], horizon)
 
-def run_eval_simulation(train, test, model_type):
+def run_eval_simulation(train, test, model_type, eval_type):
     history = list(train)
     preds = []
     for i in range(len(test)):
-        yhat = get_best_forecast(history, 1, model_type)[0]
+        # 평가 방식에 따른 데이터셋 관리
+        if eval_type == "Rolling":
+            # 가장 최근 데이터만 유지 (여기서는 train 크기만큼 유지하는 방식으로 구현)
+            current_train = history[-len(train):]
+        else: # Expanding
+            current_train = history
+            
+        yhat = get_best_forecast(current_train, 1, model_type)[0]
         preds.append(yhat)
         history.append(test.iloc[i])
     return np.array(preds)
@@ -166,36 +146,51 @@ with top_right:
             e_type = st.selectbox("평가 방식", ["Rolling", "Expanding"])
             u_type = st.selectbox("시간 단위", ["일", "월", "년"], index=2)
             
-        
         st.write("") # 간격
         btn_run = st.button("🚀 예측 실행", use_container_width=True, type="primary")
         if st.button("🗑️ 로그 초기화", use_container_width=True):
-            st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "MAE", "MdRAE", "TS", "예측 평균"])
+            st.session_state.results_df = pd.DataFrame(columns=["모델 종류", "평가 방법", "MAE", "MdRAE", "TS", "예측 평균", "model_score"])
             st.session_state.eval_preds = {}
             st.rerun()
 
 # -----------------------------
 # 분석 실행 및 결과 레이아웃
 # -----------------------------
-df = df_raw_data.copy()
 if file and btn_run:
+    df = df_raw_data.copy()
     split_idx = int(len(df) * 0.8)
     train_set, test_set = df[value_col][:split_idx], df[value_col][split_idx:]
     
-    # 1. 시뮬레이션 (평가용)
-    test_preds = run_eval_simulation(train_set, test_set, m_type)
+    # 1. 시뮬레이션 (평가 방식 반영)
+    test_preds = run_eval_simulation(train_set, test_set, m_type, e_type)
     st.session_state.eval_preds[m_type] = test_preds
     
     # 2. 미래 예측 (전체 데이터 기반)
     forecast_vals = get_best_forecast(df[value_col], h_len, m_type)
     avg_f = round(float(np.mean(forecast_vals)), 1)
     
-    # 3. 지표 계산 및 로그 저장
+    # 3. 지표 계산
     m_val = round(mae(test_set, test_preds), 2)
     r_val = round(mdrae(test_set, test_preds), 2)
     ts_val = round(tracking_signal(test_set, test_preds), 2)
     
-    new_entry = pd.DataFrame([{"모델 종류": m_type, "평가 방법": e_type, "MAE": m_val, "MdRAE": r_val, "TS": ts_val, "예측 평균": avg_f}])
+    # 4. model_score 계산 (3점 만점)
+    score = 0
+    if r_val < 1: score += 1 # MdRAE 기준
+    if abs(ts_val) <= 4: score += 1 # TS 기준
+    # MAE는 상대적이므로 현재 로그 내에서 최소값인지 확인 (첫 실행시 무조건 +1)
+    if st.session_state.results_df.empty or m_val <= st.session_state.results_df['MAE'].min():
+        score += 1
+    
+    new_entry = pd.DataFrame([{
+        "모델 종류": m_type, 
+        "평가 방법": e_type, 
+        "MAE": m_val, 
+        "MdRAE": r_val, 
+        "TS": ts_val, 
+        "예측 평균": avg_f,
+        "model_score": f"{score}/3"
+    }])
     st.session_state.results_df = pd.concat([st.session_state.results_df, new_entry], ignore_index=True)
 
 if not st.session_state.results_df.empty:
@@ -208,7 +203,6 @@ if not st.session_state.results_df.empty:
             
             st.markdown("**💡 지표 참고 사항**: MAE(낮을수록 우수), MdRAE(<1 우수), TS(±4 이내 정상)")
             
-            # [복구] 누적 시뮬레이션 비교 차트
             fig_eval = go.Figure()
             fig_eval.add_trace(go.Scatter(x=test_set.index, y=test_set, name="Actual", mode='lines+markers', line=dict(color="black")))
             for name, preds in st.session_state.eval_preds.items():
@@ -220,14 +214,11 @@ if not st.session_state.results_df.empty:
         with st.container(border=True):
             st.subheader("📊 수요 예측 결과")
             
-            freq_dict = {"일": "D", "주": "W", "월": "MS", "년": "YS"}
-            future_dates = pd.date_range(df.index[-1], periods=h_len+1, freq=freq_dict[u_type])[1:]
+            freq_dict = {"일": "D", "월": "MS", "년": "YS"}
+            future_dates = pd.date_range(df_raw_data.index[-1], periods=h_len+1, freq=freq_dict[u_type])[1:]
             
-            # [수정] Train + Test 전체를 포함한 시각화
             fig_all = go.Figure()
-            # 과거 데이터 전체 (Train + Test)
-            fig_all.add_trace(go.Scatter(x=df.index, y=df[value_col], name="과거 데이터", line=dict(color="#1f77b4")))
-            # 미래 예측 데이터 (과거의 마지막 시점과 연결)
+            fig_all.add_trace(go.Scatter(x=df_raw_data.index, y=df_raw_data[value_col], name="과거 데이터", line=dict(color="#1f77b4")))
             fig_all.add_trace(go.Scatter(x=future_dates, y=forecast_vals, name="미래 예측", line=dict(color="#ef553b", width=3)))
             
             fig_all.update_layout(height=420, margin=dict(l=10, r=10, t=30, b=10))
