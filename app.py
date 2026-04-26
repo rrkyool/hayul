@@ -145,54 +145,96 @@ def run_eval_simulation(train, test, model_type, eval_type):
     return np.array(preds)
 
 def rolling_forecast(train, test, model_type):
-    # 인덱스 보존을 위해 전체 데이터를 Series로 관리
     full_data = pd.concat([train, test])
     preds = []
-    window_size = len(train) # 고정된 훈련 창 크기
-    
+    window_size = len(train)
+
     for t in range(len(test)):
-        # [핵심] 현재 예측 시점 직전의 고정된 크기(window_size)만큼만 잘라냄
         curr_idx = len(train) + t
-        curr_train = full_data.iloc[t : curr_idx] # 시작점과 끝점이 같이 이동함
-        
-        if model_type == "ARIMA":
-            model = ARIMA(curr_train, order=(1,1,1)).fit()
-            yhat = model.forecast(steps=1)[0]
-        elif model_type == "SARIMA":
-            if len(curr_train) < 24:
-                model = ARIMA(curr_train, order=(1,1,1)).fit()
-            else:
-                model = SARIMAX(curr_train, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-            yhat = model.forecast(steps=1)[0]
-        else:
-            # 이동평균, 지수평활 등도 물리적으로 잘린 데이터만 참조하여 1회 예측
-            yhat = get_best_forecast(curr_train, 1, model_type)[0]
-            
+        curr_train = full_data.iloc[t:curr_idx]
+
+        if model_type == "이동평균":
+            yhat = curr_train.rolling(window=12, min_periods=1).mean().iloc[-1]
+
+        elif model_type == "지수평활":
+            model = ExponentialSmoothing(curr_train).fit()
+            yhat = model.forecast(1)[0]
+
+        elif model_type == "Holt-Winters":
+            try:
+                model = ExponentialSmoothing(
+                    curr_train, trend="add", seasonal="mul", seasonal_periods=12
+                ).fit()
+            except:
+                model = ExponentialSmoothing(
+                    curr_train, trend="add", seasonal="add", seasonal_periods=12
+                ).fit()
+            yhat = model.forecast(1)[0]
+
+        elif model_type in ["ARIMA", "SARIMA"]:
+            try:
+                step_m = auto_arima(
+                    curr_train,
+                    seasonal=(model_type == "SARIMA"),
+                    m=12 if model_type == "SARIMA" else 1,
+                    stepwise=True,
+                    suppress_warnings=True,
+                    error_action="ignore",
+                    max_p=3, max_q=3
+                )
+                yhat = step_m.predict(n_periods=1)[0]
+            except:
+                step_m = auto_arima(curr_train, seasonal=False)
+                yhat = step_m.predict(n_periods=1)[0]
+
         preds.append(yhat)
+
     return np.array(preds)
 
 def expanding_forecast(train, test, model_type):
     full_data = pd.concat([train, test])
     preds = []
-    
+
     for t in range(len(test)):
-        # [핵심] 시작점은 0으로 고정되고 끝점만 계속 늘어남
         curr_idx = len(train) + t
-        curr_train = full_data.iloc[0 : curr_idx] # 데이터가 계속 누적됨
-        
-        if model_type == "ARIMA":
-            model = ARIMA(curr_train, order=(1,1,1)).fit()
-            yhat = model.forecast(steps=1)[0]
-        elif model_type == "SARIMA":
-            if len(curr_train) < 24:
-                model = ARIMA(curr_train, order=(1,1,1)).fit()
-            else:
-                model = SARIMAX(curr_train, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-            yhat = model.forecast(steps=1)[0]
-        else:
-            yhat = get_best_forecast(curr_train, 1, model_type)[0]
-            
+        curr_train = full_data.iloc[:curr_idx]
+
+        if model_type == "이동평균":
+            yhat = curr_train.rolling(window=12, min_periods=1).mean().iloc[-1]
+
+        elif model_type == "지수평활":
+            model = ExponentialSmoothing(curr_train).fit()
+            yhat = model.forecast(1)[0]
+
+        elif model_type == "Holt-Winters":
+            try:
+                model = ExponentialSmoothing(
+                    curr_train, trend="add", seasonal="mul", seasonal_periods=12
+                ).fit()
+            except:
+                model = ExponentialSmoothing(
+                    curr_train, trend="add", seasonal="add", seasonal_periods=12
+                ).fit()
+            yhat = model.forecast(1)[0]
+
+        elif model_type in ["ARIMA", "SARIMA"]:
+            try:
+                step_m = auto_arima(
+                    curr_train,
+                    seasonal=(model_type == "SARIMA"),
+                    m=12 if model_type == "SARIMA" else 1,
+                    stepwise=True,
+                    suppress_warnings=True,
+                    error_action="ignore",
+                    max_p=3, max_q=3
+                )
+                yhat = step_m.predict(n_periods=1)[0]
+            except:
+                step_m = auto_arima(curr_train, seasonal=False)
+                yhat = step_m.predict(n_periods=1)[0]
+
         preds.append(yhat)
+
     return np.array(preds)
 
 
