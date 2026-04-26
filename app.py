@@ -85,15 +85,24 @@ top_left, top_right = st.columns(2)
 with top_left:
     with st.container(border=True):
         st.subheader("📂 데이터 업로드")
-        file = st.file_uploader("CSV 업로드", label_visibility="collapsed")
+        file = st.file_uploader("CSV 파일을 선택하세요", label_visibility="collapsed")
         if file:
-            df = load_data(file)
-            if df is not None:
-                date_col = df.columns[0]
-                val_col = df.select_dtypes(include=np.number).columns[0]
-                df[date_col] = pd.to_datetime(df[date_col])
-                df = df.sort_values(date_col).set_index(date_col)
-                st.success("데이터 로드 완료")
+            df_raw_data = load_data(file)
+            if df_raw_data is not None:
+                date_col = df_raw_data.columns[0]
+                value_col = df_raw_data.select_dtypes(include=np.number).columns[0]
+                df_raw_data[date_col] = pd.to_datetime(df_raw_data[date_col])
+                df_raw_data = df_raw_data.sort_values(date_col).set_index(date_col)
+                
+                raw_values = df_raw_data[value_col].copy()
+                proc_values = raw_values.interpolate().pipe(hampel_filter).pipe(fft_denoise)
+                df_raw_data[value_col] = proc_values
+                
+                fig_prep = go.Figure()
+                fig_prep.add_trace(go.Scatter(x=df_raw_data.index, y=raw_values, name="원본", line=dict(color="gray", width=1), opacity=0.4))
+                fig_prep.add_trace(go.Scatter(x=df_raw_data.index, y=proc_values, name="전처리", line=dict(color="#00CC96")))
+                fig_prep.update_layout(height=200, margin=dict(l=10, r=10, t=10, b=10))
+                st.plotly_chart(fig_prep, use_container_width=True)
 
 with top_right:
     with st.container(border=True):
