@@ -36,6 +36,25 @@ def load_data(file):
         except: continue
     return None
 
+def hampel_filter(series, window=5, n=3):
+    series = series.astype(float)
+    new = series.copy()
+    for i in range(window, len(series)-window):
+        win = series.iloc[i-window:i+window]
+        med = np.median(win)
+        mad = np.median(np.abs(win-med))
+        if mad == 0: continue
+        if abs(series.iloc[i]-med) > n*mad:
+            new.iloc[i] = med
+    return new
+
+def fft_denoise(signal, keep_ratio=0.1):
+    fft = np.fft.fft(signal)
+    n = len(fft)
+    cutoff = int(n * keep_ratio)
+    fft[cutoff:n-cutoff] = 0
+    return np.fft.ifft(fft).real
+
 def mae(y, yhat): return np.mean(np.abs(np.array(y) - np.array(yhat)))
 
 def mdrae(y, yhat):
