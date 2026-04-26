@@ -120,30 +120,6 @@ def get_best_forecast(train, horizon, model_type):
             
     return np.repeat(train.iloc[-1], horizon)
 
-def run_eval_simulation(train, test, model_type, eval_type):
-    # 인덱스 보존을 위해 Series로 관리
-    full_series = pd.concat([train, test])
-    preds = []
-    
-    # Rolling 시 유지할 고정 창 크기
-    window_size = len(train)
-    
-    for i in range(len(test)):
-        current_idx = len(train) + i
-        
-        if eval_type == "Rolling":
-            # [Rolling] 시작점을 강제로 i만큼 밀어버림 (과거 데이터 완전 배제)
-            current_train = full_series.iloc[i : current_idx]
-        else:
-            # [Expanding] 0부터 현재까지 모든 데이터 포함
-            current_train = full_series.iloc[0 : current_idx]
-            
-        # 단일 시점 예측 수행
-        yhat = get_best_forecast(current_train, 1, model_type)[0]
-        preds.append(yhat)
-        
-    return np.array(preds)
-
 def rolling_forecast(train, test, model_type):
     full_data = pd.concat([train, test])
     preds = []
