@@ -144,53 +144,53 @@ def run_eval_simulation(train, test, model_type, eval_type):
         
     return np.array(preds)
 
-# --- [함수 수정: 하율 님의 원본 로직 활용] ---
-
 def rolling_forecast(train, test, model_type):
-    history = list(train)
+    # 인덱스 보존을 위해 전체 데이터를 Series로 관리
+    full_data = pd.concat([train, test])
     preds = []
-    # Rolling은 훈련 데이터의 크기를 일정하게 유지함
-    window_size = len(train)
+    window_size = len(train) # 고정된 훈련 창 크기
     
     for t in range(len(test)):
-        # 현재의 고정된 윈도우 추출
-        current_train = history[-window_size:]
+        # [핵심] 현재 예측 시점 직전의 고정된 크기(window_size)만큼만 잘라냄
+        curr_idx = len(train) + t
+        curr_train = full_data.iloc[t : curr_idx] # 시작점과 끝점이 같이 이동함
         
         if model_type == "ARIMA":
-            model = ARIMA(current_train, order=(1,1,1)).fit()
-            yhat = model.forecast()[0]
+            model = ARIMA(curr_train, order=(1,1,1)).fit()
+            yhat = model.forecast(steps=1)[0]
         elif model_type == "SARIMA":
-            # SARIMA 에러 방지를 위해 최소 데이터 체크 포함
-            if len(current_train) < 24:
-                model = ARIMA(current_train, order=(1,1,1)).fit()
+            if len(curr_train) < 24:
+                model = ARIMA(curr_train, order=(1,1,1)).fit()
             else:
-                model = SARIMAX(current_train, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-            yhat = model.forecast()[0]
+                model = SARIMAX(curr_train, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+            yhat = model.forecast(steps=1)[0]
         else:
-            # 이동평균, 지수평활 등 다른 모델은 기존 함수 활용하되 데이터는 Rolling된 것만 전달
-            yhat = get_best_forecast(current_train, 1, model_type)[0]
+            # 이동평균, 지수평활 등도 물리적으로 잘린 데이터만 참조하여 1회 예측
+            yhat = get_best_forecast(curr_train, 1, model_type)[0]
             
         preds.append(yhat)
-        history.append(test.iloc[t])
     return np.array(preds)
 
 def expanding_forecast(train, test, model_type):
+    full_data = pd.concat([train, test])
     preds = []
-    for i in range(len(test)):
-        # 데이터가 계속 누적됨 (Expanding)
-        hist = pd.concat([train, test[:i]])
+    
+    for t in range(len(test)):
+        # [핵심] 시작점은 0으로 고정되고 끝점만 계속 늘어남
+        curr_idx = len(train) + t
+        curr_train = full_data.iloc[0 : curr_idx] # 데이터가 계속 누적됨
         
         if model_type == "ARIMA":
-            model = ARIMA(hist, order=(1,1,1)).fit()
-            yhat = model.forecast()[0]
+            model = ARIMA(curr_train, order=(1,1,1)).fit()
+            yhat = model.forecast(steps=1)[0]
         elif model_type == "SARIMA":
-            if len(hist) < 24:
-                model = ARIMA(hist, order=(1,1,1)).fit()
+            if len(curr_train) < 24:
+                model = ARIMA(curr_train, order=(1,1,1)).fit()
             else:
-                model = SARIMAX(hist, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-            yhat = model.forecast()[0]
+                model = SARIMAX(curr_train, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+            yhat = model.forecast(steps=1)[0]
         else:
-            yhat = get_best_forecast(hist, 1, model_type)[0]
+            yhat = get_best_forecast(curr_train, 1, model_type)[0]
             
         preds.append(yhat)
     return np.array(preds)
