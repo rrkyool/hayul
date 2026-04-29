@@ -50,7 +50,7 @@ def hampel_filter(series, window=5, n=3):
             new.iloc[i] = med
     return new
 
-def fft_denoise(signal, keep_ratio=0.1):
+def fft_denoise(signal, keep_ratio=0.3):
     fft = np.fft.fft(signal)
     n = len(fft)
     cutoff = int(n * keep_ratio)
